@@ -4,11 +4,11 @@ import { api, type ComplaintDetail } from './api'
 import { priorityClass } from './charts'
 
 const SAMPLES = [
-  { text: 'Garbage not collected in my street for 5 days near Sector 14.', loc: '' },
-  { text: 'Open manhole on the road right outside the school gate, children walk here every morning', loc: 'near the school, Sector 9' },
-  { text: 'Water leaking from the pipeline on Lakeview Road, clean water flowing across the road', loc: 'Lakeview Road' },
-  { text: 'Live wire hanging from the pole and sparking since the rain last night', loc: 'MG Road' },
-  { text: 'Park bench broken in the garden', loc: 'Central Park' },
+  { text: 'Garbage not collected in my street for 5 days near Dharavi.', loc: '' },
+  { text: 'Open manhole on the road right outside the school gate, children walk here every morning', loc: 'near Dadar station' },
+  { text: 'Water leaking from the pipeline near Sion hospital, clean water flowing across the road', loc: 'Sion' },
+  { text: 'Live wire hanging from the pole and sparking since the rain last night', loc: 'Andheri West' },
+  { text: 'Park bench broken in the garden', loc: 'Juhu beach' },
 ]
 
 export function IntakeModal({ aiEnabled, onClose, onOpen, onCreated }: { aiEnabled: boolean; onClose: () => void; onOpen: (id: string) => void; onCreated: () => void }) {

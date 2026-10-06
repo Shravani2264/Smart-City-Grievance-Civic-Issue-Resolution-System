@@ -101,10 +101,10 @@ export function CityMap({ data, mode, onSelect, showPoints = true, highlight }: 
   const value = (w: MapData['wards'][number]) => mode === 'open' ? w.open / maxOpen : mode === 'efficiency' ? ((w.efficiency ?? 50) - 50) / 50 : (highlight?.[w.ward] ?? 0) / 100
   const pts = useMemo(() => [...data.points].sort((a, c) => Number(a.open) - Number(c.open)), [data.points])
   return <div className="citymap">
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Ward map of the city with complaint locations" onMouseLeave={() => setTip(null)}>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Ward map of Mumbai with complaint locations" onMouseLeave={() => setTip(null)}>
       {data.wards.map((w) => <g key={w.ward}>
         <rect x={w.col * cw + 2} y={w.row * ch + 2} width={cw - 4} height={ch - 4} rx={8} fill={seqBlue(value(w))} className="ward-cell"
-          onMouseMove={(e) => setTip({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, body: <><strong>Ward {w.ward} · {w.name}</strong><span>{w.open} open · {w.overdue} overdue</span><span>Efficiency {w.efficiency ?? '—'}/100</span>{mode === 'risk' && <span>Waterlogging risk {highlight?.[w.ward] ?? 0}/100</span>}{w.top_issue && <span>Top issue: {w.top_issue}</span>}</> })} />
+          onMouseMove={(e) => setTip({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, body: <><strong>Ward {w.code || w.ward} · {w.name}</strong><span>{w.open} open · {w.overdue} overdue</span><span>Efficiency {w.efficiency ?? '—'}/100</span>{mode === 'risk' && <span>Waterlogging risk {highlight?.[w.ward] ?? 0}/100</span>}{w.top_issue && <span>Top issue: {w.top_issue}</span>}</> })} />
       </g>)}
       <path d={`M0,${H * 0.47} C${W * 0.2},${H * 0.4} ${W * 0.3},${H * 0.62} ${W * 0.5},${H * 0.55} S${W * 0.8},${H * 0.15} ${W},${H * 0.12}`} className="river" />
       {showPoints && pts.map((p) => <circle key={p.id} cx={px(p.lng)} cy={py(p.lat)} r={p.open ? (p.priority === 'CRITICAL' ? 10 : 8) : 5}
@@ -112,7 +112,7 @@ export function CityMap({ data, mode, onSelect, showPoints = true, highlight }: 
         onClick={() => onSelect?.(p.id)}
         onMouseMove={(e) => { e.stopPropagation(); setTip({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, body: <><strong>{p.id} · {p.title}</strong><span>{p.category}</span><span>{p.status} · {p.priority}</span></> }) }} />)}
       {data.wards.map((w) => <g key={`l${w.ward}`} className={value(w) > 0.6 ? 'on-dark' : ''}>
-        <text x={w.col * cw + 12} y={w.row * ch + 28} className="ward-label">W{w.ward} {w.name}</text>
+        <text x={w.col * cw + 12} y={w.row * ch + 28} className="ward-label">{w.code || `W${w.ward}`} {w.name}</text>
         <text x={w.col * cw + 12} y={w.row * ch + 48} className="ward-sub">{mode === 'open' ? `${w.open} open` : mode === 'efficiency' ? `Efficiency ${w.efficiency ?? '—'}` : `Risk ${highlight?.[w.ward] ?? 0}`}</text>
       </g>)}
     </svg>

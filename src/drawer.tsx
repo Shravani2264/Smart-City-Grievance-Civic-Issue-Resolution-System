@@ -45,7 +45,7 @@ export function DetailDrawer({ id, now, onClose, onChanged, onSelect }: { id: st
             <div className="factor-row total"><span>Severity score · trend {c.severity_factors.trend}</span><strong>{c.severity_score}</strong></div>
           </div>
           <div className="detail-section"><h3>LOCATION & ROUTING</h3>
-            <div className="detail-pair"><span><LocateFixed size={15} />Geotag</span><strong>Ward {c.ward} · {c.ward_name}<small>{c.location_meta.zone} · {c.location_meta.method} · confidence {Math.round(c.location_meta.geo_confidence * 100)}%{c.location_meta.needs_field_verification ? ' · needs field check' : ''}</small></strong></div>
+            <div className="detail-pair"><span><LocateFixed size={15} />Geotag</span><strong>Ward {c.ward_name}<small>{c.location_meta.zone} · {c.location_meta.method} · confidence {Math.round(c.location_meta.geo_confidence * 100)}%{c.location_meta.needs_field_verification ? ' · needs field check' : ''}</small></strong></div>
             <div className="detail-pair"><span><Building2 size={15} />Assigned</span><strong>{c.department}<small>{c.unit} · {c.severity_factors.routing.jurisdiction}</small></strong></div>
             {c.severity_factors.routing.notify?.length > 0 && <div className="detail-pair"><span>Also notified</span><strong>{c.severity_factors.routing.notify.join(', ')}</strong></div>}
           </div>

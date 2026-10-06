@@ -121,7 +121,7 @@ export function ComplaintsView({ now, version, onSelect, search }: Common & { se
       {!data ? <Loading err={err} /> : <table className="complaint-table"><thead><tr><th>ISSUE</th><th>LOCATION</th><th>ROUTED TO</th><th>PRIORITY</th><th>STATUS</th><th>SLA</th><th>ESC.</th></tr></thead>
         <tbody>{data.map((c) => <tr key={c.id} onClick={() => onSelect(c.id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onSelect(c.id)}>
           <td><div className="table-issue"><span className="cat-chip" style={{ background: catHex(c.category) }} /><span><strong>{c.title}</strong><small>{c.id} · {ago(c.created_at, now)}{c.cluster_id && ` · ${c.cluster_id} (${c.cluster_size})`}{c.has_image ? ' · 📷' : ''}</small></span></div></td>
-          <td><strong>Ward {c.ward} · {c.ward_name}</strong><small>{c.landmark ?? (c.sector ? `Sector ${c.sector}` : c.location_text || '—')}</small></td>
+          <td><strong>Ward {c.ward_name}</strong><small>{c.landmark ?? (c.location_text || '—')}</small></td>
           <td><strong>{c.department}</strong><small>{c.unit}</small></td>
           <td><span className={priorityClass(c.priority)}>{c.priority} · {c.severity_score}</span></td>
           <td><span className={`status-label s-${c.status.toLowerCase().replace(' ', '-')}`}><i />{c.status}</span></td>

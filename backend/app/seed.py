@@ -1,8 +1,8 @@
-"""Seed ~5 weeks of synthetic city history by replaying citizen reports through the real agent pipeline.
+"""Seed ~5 weeks of synthetic Mumbai city history by replaying citizen reports through the real agent pipeline.
 
 Reports are submitted in chronological order on the simulated clock and the orchestrator's control loop
 ticks every 3 simulated hours, so field progress, verification, reopenings and escalations all happen
-exactly as they would live. Includes the problem-statement scenario: a garbage cluster near Sector 14.
+exactly as they would live. Includes a garbage cluster near Dharavi and monsoon waterlogging scenarios.
 """
 import random
 
@@ -36,10 +36,22 @@ TEMPLATES = {
     "encroachment": (3, ["Hawkers have encroached the entire footpath {loc}", "Illegal construction blocking the lane {loc}"]),
     "noise_pollution": (2, ["Loudspeaker noise late at night {loc}", "Constant loud music from hall {loc} after 11 pm"]),
 }
-LANDMARK_PHRASES = ["near the temple", "near Hanuman Temple", "opposite City Hospital", "near the bus depot", "on MG Road", "near the railway station",
-                    "behind Old Market", "near Riverside Promenade", "on Lakeview Road", "near Civic Centre", "near the school", "in Shanti Nagar",
-                    "near Greenfield community park", "on Airport Road", "in the Industrial Estate", "near the mall", "near the stadium",
-                    "near the college", "near the church", "near the gurudwara", "in New Township", "near the flyover", "in Hillcrest"]
+
+# Real Mumbai locations for natural complaint text
+LANDMARK_PHRASES = [
+    "near Dadar station", "near Andheri station", "in Bandra West", "near BKC",
+    "at Hindmata junction", "on SV Road", "near Dharavi", "near Sion hospital",
+    "in Kurla", "near Ghatkopar station", "on Western Express Highway",
+    "in Borivali", "near Malad station", "at Goregaon", "in Chembur",
+    "near Gateway of India", "on Marine Drive", "near CST", "at Parel",
+    "in Powai", "near IIT Bombay", "in Mulund", "near Juhu beach",
+    "at Lokhandwala", "in Versova", "near Kandivali station",
+    "in Dahisar", "at Bandra station", "near Worli sea link", "at Lower Parel",
+    "near Haji Ali", "in Lalbaug", "at Matunga", "near Byculla zoo",
+    "near the Siddhivinayak temple", "in Fort area", "at Colaba",
+    "on Link Road", "near Goregaon Film City", "in Vikhroli",
+]
+
 FIRST = ["Ananya", "Rohan", "Priya", "Vikram", "Sneha", "Arjun", "Meera", "Kabir", "Isha", "Aditya", "Farah", "Imran", "Neha", "Siddharth", "Pooja",
          "Rahul", "Kavya", "Dev", "Sana", "Tanvi", "Harsh", "Nisha", "Omkar", "Ritu", "Yash", "Zoya", "Gaurav", "Shreya", "Aman", "Lakshmi"]
 LAST = ["Mehta", "Kulkarni", "Iyer", "Patil", "Shah", "Khan", "Deshmukh", "Nair", "Joshi", "Rao", "Gupta", "Pawar", "Fernandes", "Sharma", "Singh"]
@@ -47,14 +59,17 @@ LAST = ["Mehta", "Kulkarni", "Iyer", "Patil", "Shah", "Khan", "Deshmukh", "Nair"
 
 def loc_phrase():
     r = rng.random()
-    s = rng.randint(1, 36)
-    if r < 0.45:
-        return f"in Sector {s}", f"Sector {s}"
-    if r < 0.8:
+    if r < 0.65:
         lm = rng.choice(LANDMARK_PHRASES)
-        return lm, lm.split(" ", 1)[1] if lm.startswith(("near", "on", "in", "opposite", "behind")) else lm
+        return lm, lm.split(" ", 1)[1] if lm.startswith(("near", "on", "in", "at", "opposite", "behind")) else lm
+    # Two-part: landmark + locality
     lm = rng.choice(LANDMARK_PHRASES)
-    return f"{lm}, Sector {s}", f"{lm.split(' ', 1)[1]}, Sector {s}"
+    extras = ["Dadar", "Andheri", "Bandra", "Kurla", "Borivali", "Malad", "Goregaon",
+              "Chembur", "Ghatkopar", "Worli", "Parel", "Dharavi", "Sion", "Powai", "Mulund", "Kandivali"]
+    loc = rng.choice(extras)
+    combined = f"{lm}, {loc}"
+    short = lm.split(" ", 1)[1] if lm.startswith(("near", "on", "in", "at")) else lm
+    return combined, f"{short}, {loc}"
 
 
 def make_report():
@@ -82,12 +97,12 @@ def seed(days=35, per_day=18):
 
     # Recurring incidents: several citizens reporting the same problem within a few days
     incidents = [
-        ("garbage_uncollected", "Garbage not collected for {d} days near the community park, Sector 14", "Sector 14 community park", now - 3 * DAY, 11, 2.8),
-        ("water_leakage", "Water leaking from the pipeline on Lakeview Road, flowing across the road", "Lakeview Road", now - 2 * DAY, 6, 1.6),
-        ("pothole", "Big potholes on MG Road near the junction causing traffic jam", "MG Road", now - 4 * DAY, 7, 3.5),
-        ("drain_blockage", "Blocked drain in Shanti Nagar, dirty water overflowing on road", "Shanti Nagar", now - 1.5 * DAY, 5, 1.3),
-        ("streetlight_out", "Streetlights not working near Riverside Promenade, very dark at night", "Riverside Promenade", now - 9 * DAY, 6, 2),
-        ("sewage_overflow", "Sewage overflowing near the railway station for days, terrible smell", "near the railway station", now - 12 * DAY, 5, 2),
+        ("garbage_uncollected", "Garbage not collected for {d} days near Dharavi, very unhygienic", "Dharavi", now - 3 * DAY, 11, 2.8),
+        ("water_leakage", "Water leaking from the pipeline near Sion hospital, flowing across the road", "Sion hospital", now - 2 * DAY, 6, 1.6),
+        ("pothole", "Big potholes on SV Road near Andheri causing traffic jam", "SV Road Andheri", now - 4 * DAY, 7, 3.5),
+        ("drain_blockage", "Blocked drain at Hindmata junction, dirty water overflowing on road", "Hindmata junction", now - 1.5 * DAY, 5, 1.3),
+        ("streetlight_out", "Streetlights not working near Marine Drive, very dark at night", "Marine Drive", now - 9 * DAY, 6, 2),
+        ("sewage_overflow", "Sewage overflowing near Kurla station for days, terrible smell", "near Kurla station", now - 12 * DAY, 5, 2),
     ]
     # Recent surge (monsoon evening) so the live board has real open work
     for _ in range(46):
@@ -103,7 +118,6 @@ def seed(days=35, per_day=18):
         while next_tick <= t:
             orch.tick(next_tick)
             next_tick += 3 * 3600
-        # Tickets from the last ~10 h are left for live operators (not auto-progressed by the crew simulator)
         orch.intake(text, loc, name, at=t, use_ai=False, simulate=not (t > now - 10 * 3600 and rng.random() < 0.6))
     orch.tick(now)
 

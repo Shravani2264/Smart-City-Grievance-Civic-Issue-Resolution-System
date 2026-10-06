@@ -20,7 +20,7 @@ from .agents.predictive import PredictiveAgent
 from .agents.reporting import TransparencyReportAgent, efficiency
 from .agents.sla import sla_state
 from .agents.workflow import ALLOWED
-from .config import CATEGORY_COLORS, DEPARTMENTS, GRID_COLS, GRID_ROWS, LAT_MAX, LAT_MIN, LNG_MAX, LNG_MIN, WARDS
+from .config import CATEGORY_COLORS, CITY, DEPARTMENTS, GRID_COLS, GRID_ROWS, LAT_MAX, LAT_MIN, LNG_MAX, LNG_MIN, WARDS
 
 logging.basicConfig(level=logging.INFO)
 
@@ -265,7 +265,7 @@ def city_map(days: int = 14, category: str = ""):
         lst = [c for c in month if c["ward"] == w]
         e = efficiency(lst, now) or {}
         top = Counter(c["category"] for c in lst if c["created_at"] >= now - days * 86400).most_common(1)
-        wards.append({"ward": w, "name": m["name"], "row": (w - 1) // GRID_COLS, "col": (w - 1) % GRID_COLS, "pop": m["pop"],
+        wards.append({"ward": w, "name": m["name"], "code": m.get("code", ""), "row": m.get("row", (w - 1) // GRID_COLS), "col": m.get("col", (w - 1) % GRID_COLS), "pop": m["pop"],
                       "open": sum(1 for c in rows if c["ward"] == w and c["status"] in OPEN),
                       "recent": sum(1 for c in rows if c["ward"] == w), "efficiency": e.get("score"),
                       "overdue": e.get("overdue", 0), "top_issue": top[0][0] if top else None})

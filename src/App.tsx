@@ -73,7 +73,7 @@ export default function App() {
           <span className="brand-mark"><Activity size={20} strokeWidth={2.5} /></span>
           <span className="brand-name">civic<span>pulse</span><small>URBAN OPERATIONS</small></span>
         </a>
-        <div className="city-switcher"><span className="city-avatar">N</span><span><strong>Northbridge</strong><small>Municipal Corporation · 12 wards</small></span></div>
+        <div className="city-switcher"><span className="city-avatar">M</span><span><strong>Mumbai</strong><small>BMC (MCGM) · 24 wards</small></span></div>
         <div className="nav-caption">CONTROL CENTER</div>
         <nav aria-label="Main navigation">
           {NAV.map(({ label, icon: Icon }) => (
@@ -106,7 +106,7 @@ export default function App() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20} /></button>
-          <div className="breadcrumb"><span>Northbridge</span><ChevronRight size={14} /><strong>{view}</strong></div>
+          <div className="breadcrumb"><span>Mumbai</span><ChevronRight size={14} /><strong>{view}</strong></div>
           <label className="global-search"><Search size={16} /><input value={search} onChange={(e) => { setSearch(e.target.value); if (view !== 'Complaints') setView('Complaints') }} placeholder="Search tickets, incidents, places..." /></label>
           <button className="icon-button notification-button" aria-label="Alerts" onClick={() => setView('Escalations')}><Bell size={18} />{dash && dash.kpis.breached > 0 && <i />}</button>
           <button className="primary-button" onClick={() => setShowIntake(true)}><Sparkles size={15} />Report issue</button>

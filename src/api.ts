@@ -45,7 +45,7 @@ export type Dashboard = {
 
 export type MapData = {
   bounds: { lat_min: number; lat_max: number; lng_min: number; lng_max: number; cols: number; rows: number }
-  wards: { ward: number; name: string; row: number; col: number; pop: number; open: number; recent: number; efficiency: number | null; overdue: number; top_issue: string | null }[]
+  wards: { ward: number; name: string; code: string; row: number; col: number; pop: number; open: number; recent: number; efficiency: number | null; overdue: number; top_issue: string | null }[]
   points: { id: string; lat: number; lng: number; category: string; color: string; status: string; priority: Priority; title: string; open: boolean; ward: number }[]
   categories: string[]
 }
