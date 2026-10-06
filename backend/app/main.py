@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, llm, rag
+from . import db, llm
 from .agents.orchestrator import Orchestrator
 from .agents.predictive import PredictiveAgent
 from .agents.reporting import TransparencyReportAgent, efficiency
@@ -92,7 +92,7 @@ def view(c, now=None, full=False):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ai": llm.status(), "rag": rag.status(), "clock": db.now(),
+    return {"ok": True, "ai": llm.status(), "clock": db.now(),
             "clock_offset_hours": db.get_setting("clock_offset_hours", 0), "agents": len(AGENTS)}
 
 

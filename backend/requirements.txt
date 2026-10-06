@@ -7,7 +7,3 @@ groq>=0.30
 langchain>=0.3
 langchain-core>=0.3
 langchain-groq>=0.2
-# RAG / vector DB: semantic duplicate detection + classification grounding.
-# Optional — the system falls back to keyword matching if this is absent. Ships a local
-# MiniLM embedder (ONNX, no PyTorch, runs offline after the first model download).
-chromadb>=0.5

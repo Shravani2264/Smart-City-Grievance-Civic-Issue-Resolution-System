@@ -6,7 +6,7 @@ exactly as they would live. Includes a garbage cluster near Dharavi and monsoon 
 """
 import random
 
-from . import db, rag
+from . import db
 from .agents.orchestrator import Orchestrator
 
 DAY = 86400
@@ -83,8 +83,6 @@ def make_report():
 
 def seed(days=35, per_day=18):
     db.reset()
-    if rag.available():
-        rag.reset()
     db.set_setting("clock_offset_hours", 0)
     db.set_setting("rain_mm_hr", 24)
     orch = Orchestrator()
@@ -120,12 +118,8 @@ def seed(days=35, per_day=18):
         while next_tick <= t:
             orch.tick(next_tick)
             next_tick += 3 * 3600
-        orch.intake(text, loc, name, at=t, use_ai=False, simulate=not (t > now - 10 * 3600 and rng.random() < 0.6), index_rag=False)
+        orch.intake(text, loc, name, at=t, use_ai=False, simulate=not (t > now - 10 * 3600 and rng.random() < 0.6))
     orch.tick(now)
-
-    # Bulk-embed all complaints into the vector store in one pass (fast, idempotent). No-op if RAG off.
-    if rag.available():
-        rag.index_bulk(db.query("SELECT id, text, issue_type, category, ward, status, cluster_id, created_at FROM complaints"))
 
     # A few reports that operators found to be false / malicious -> reputation penalty
     for c in db.query("SELECT id FROM complaints WHERE status='Assigned' AND is_primary=1 AND cluster_id IS NULL ORDER BY created_at DESC LIMIT 4"):

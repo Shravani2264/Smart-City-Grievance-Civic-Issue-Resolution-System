@@ -22,11 +22,10 @@ import sys
 import tempfile
 import time
 
-# Isolate: throwaway DB + its own vector store, before importing the app.
+# Isolate: throwaway DB before importing the app.
 os.environ.setdefault("CIVIC_DB", os.path.join(tempfile.mkdtemp(), "eval.db"))
-os.environ.setdefault("CIVIC_CHROMA_DIR", os.path.join(tempfile.mkdtemp(), "eval_chroma"))
 
-from app import db, guard, llm, rag  # noqa: E402
+from app import db, guard, llm  # noqa: E402
 from app.agents.orchestrator import Orchestrator  # noqa: E402
 
 # --- Labelled gold set: (text, location, gold_issue_type, expected_band) ---
@@ -94,7 +93,7 @@ def run(use_ai: bool):
 
     orch = Orchestrator()
     report = {"mode": "ai" if (use_ai and llm.available()) else "rules",
-              "llm": llm.status(), "rag": rag.status(), "seeded": n_seeded, "seed_seconds": round(seed_s, 1)}
+              "llm": llm.status(), "seeded": n_seeded, "seed_seconds": round(seed_s, 1)}
 
     # --- Classification / routing / priority / latency ---
     issue_hits = cat_hits = band_hits = 0
@@ -129,7 +128,7 @@ def run(use_ai: bool):
     report["duplicate_detection"] = {
         "precision": pct(dup_tp, dup_tp + dup_fp), "recall": pct(dup_tp, dup_tp + dup_fn),
         "tp": dup_tp, "fp": dup_fp, "fn": dup_fn, "tn": dup_tn,
-        "mode": "semantic (chromadb)" if rag.available() else "keyword (jaccard)",
+        "mode": "keyword (geo + jaccard + type + recency)",
     }
 
     # --- Prompt-injection resistance ---
@@ -163,8 +162,7 @@ def fmt(r: dict) -> str:
     L.append(f"  CivicPulse pipeline evaluation - mode: {r['mode'].upper()}")
     L.append("=" * 62)
     L.append(f"  Seeded {r['seeded']} complaints in {r['seed_seconds']}s | "
-             f"LLM={'on' if r['llm']['enabled'] else 'off'} | RAG={'on' if r['rag']['enabled'] else 'off'}"
-             + (f" ({r['rag']['indexed']} vectors)" if r['rag']['enabled'] else ""))
+             f"LLM={'on' if r['llm']['enabled'] else 'off'}")
     c = r["classification"]
     L.append("")
     L.append(f"  CLASSIFICATION  (n={c['n']})")

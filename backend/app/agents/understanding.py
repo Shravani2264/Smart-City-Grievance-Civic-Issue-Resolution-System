@@ -1,12 +1,11 @@
 """Agent 1 - Complaint Understanding: turns free citizen text (and an optional photo) into a structured issue.
 
 Citizen text is untrusted: it is sanitised against prompt injection (see app.guard) before it reaches
-the LLM, and wrapped in data delimiters. When the RAG layer is available, a few semantically similar
-past complaints are retrieved and shown to the model as grounding examples.
+the LLM, and wrapped in data delimiters.
 """
 import re
 
-from .. import guard, llm, rag
+from .. import guard, llm
 from ..config import ISSUE_TYPES, URGENCY_SIGNALS
 from .base import Agent, AgentResult
 
@@ -120,17 +119,10 @@ class ComplaintUnderstandingAgent(Agent):
         title = ISSUE_TYPES[issue]["label"]
         mode, reasoning, image_findings = "rules", "", ""
 
-        # RAG grounding: retrieve a few semantically similar past complaints with confirmed labels.
-        examples = rag.retrieve_examples(text, n=3) if (use_ai and rag.available()) else []
-
         ai = None
         if use_ai and llm.available():
             body = guard.wrap_untrusted(text or "(no text, photo only - classify from the image)")
-            shots = ""
-            if examples:
-                shots = "\n\nSimilar past complaints (for reference only, do not copy blindly):\n" + \
-                        "\n".join(f"- \"{e['text'][:90]}\" -> {e['issue_type']}" for e in examples)
-            prompt = f"Classify this complaint.{shots}\n\n{body}"
+            prompt = f"Classify this complaint.\n\n{body}"
             ai = llm.structured(SYSTEM, prompt, SCHEMA, image_b64=image_b64, image_type=image_type)
 
         if ai:
@@ -158,13 +150,11 @@ class ComplaintUnderstandingAgent(Agent):
             "issue_type": issue, "issue_label": meta["label"], "category": meta["category"], "title": title,
             "location": loc, "duration_days": duration, "priority_hint": hint, "confidence": conf,
             "urgency_signals": signals, "image_findings": image_findings,
-            "security": gr, "rag_examples": examples,
+            "security": gr,
         }
         sig_txt = ", ".join(s.replace("_", " ") for s in signals) or "none"
         extra = ""
         if gr["injection_detected"]:
             extra += " ⚠ Prompt-injection attempt detected in the complaint text and neutralised; treated as data only."
-        if examples:
-            extra += f" Grounded on {len(examples)} similar past complaint(s) via RAG."
         reasoning_out = f"{reasoning} Urgency signals: {sig_txt}." + (f" Persisting ~{duration:g} days." if duration else "") + extra
         return AgentResult(self.name, output, reasoning_out, mode)

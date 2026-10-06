@@ -5,6 +5,5 @@ __pycache__/
 .pytest_cache/
 backend/civic.db*
 backend/.env
-backend/chroma_db/
 backend/eval/last_run_*.json
 server.log

@@ -7,7 +7,7 @@ tick():    the continuous control loop - field progress, resolution verification
 import hashlib
 import time
 
-from .. import db, rag
+from .. import db
 from ..config import ISSUE_TYPES
 from .base import AgentResult
 from .duplicate import DuplicateDetectionAgent
@@ -38,7 +38,7 @@ class Orchestrator:
         self.reputation = ReputationAgent()
 
     def intake(self, text, location_text="", citizen_name="", citizen_id=None, channel="web", image_b64=None, image_type=None,
-               lat=None, lng=None, at=None, use_ai=True, simulate=False, index_rag=True):
+               lat=None, lng=None, at=None, use_ai=True, simulate=False):
         t_start = time.perf_counter()
         now = at if at is not None else db.now()
         cid = db.next_complaint_id()
@@ -126,9 +126,6 @@ class Orchestrator:
             if primary is not None and do["follow_up_on_resolved"] and primary["status"] in ("Resolved", "Closed"):
                 self.verification.follow_up(db.get("complaints", primary["id"]), cid, now)
                 db.update("complaints", cid, {"status": db.get("complaints", primary["id"])["status"]})
-
-        if index_rag:
-            rag.index(db.get("complaints", cid))  # best-effort semantic index (no-op if RAG disabled)
 
         open_in_ward = db.scalar("SELECT COUNT(*) FROM complaints WHERE ward=? AND category=? AND status NOT IN ('Resolved','Closed','Rejected')",
                                  (lo["ward"], uo["category"])) or 0
