@@ -213,12 +213,6 @@
 .drawer-actions { align-items: end; }
 .status-action-label { font-size: 11px; }
 .status-action-label select { font-size: 12px; }
-.feedback-box { display: grid; gap: 3px; color: #5d6a61; font-size: 11px; }
-.feedback-box > div { display: flex; gap: 2px; }
-.feedback-box button { padding: 2px; border: 0; color: #c9cfc9; background: none; cursor: pointer; }
-.feedback-box button.on { color: #eda100; }
-.feedback-box button.on svg { fill: #eda100; }
-.feedback-box small { color: #8b968d; font-size: 10px; }
 
 /* intake */
 .intake-modal { width: min(560px, 100%); }

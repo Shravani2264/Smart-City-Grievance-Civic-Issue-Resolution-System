@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Building2, Check, ChevronDown, GitMerge, LocateFixed, ShieldCheck, Sparkles, Star, X } from 'lucide-react'
+import { Building2, Check, ChevronDown, GitMerge, LocateFixed, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { ago, api, clock, slaText, titleCase, type ComplaintDetail } from './api'
 import { SlaBadge, catHex, priorityClass } from './charts'
 
@@ -8,7 +8,6 @@ export function DetailDrawer({ id, now, onClose, onChanged, onSelect }: { id: st
   const [err, setErr] = useState('')
   const [tab, setTab] = useState<'overview' | 'trace' | 'timeline'>('overview')
   const [next, setNext] = useState('')
-  const [rating, setRating] = useState(0)
 
   useEffect(() => { setC(null); api.complaint(id).then(setC).catch((e) => setErr(e.message)) }, [id])
   useEffect(() => { if (c) setNext(c.allowed_next[0] ?? '') }, [c])
@@ -19,13 +18,6 @@ export function DetailDrawer({ id, now, onClose, onChanged, onSelect }: { id: st
     try { const r = await api.setStatus(c.id, next); setC(r); onChanged(`${c.id} → ${next}${next === 'Resolved' ? ' · verification window opened' : ''}`) }
     catch (e) { setErr((e as Error).message) }
   }
-  async function rate(n: number) {
-    if (!c) return
-    setRating(n)
-    const r = await api.feedback(c.id, n, n <= 2 ? 'Issue still not fixed' : 'Confirmed fixed')
-    setC(r.complaint); onChanged(`${c.id}: ${r.message}`)
-  }
-
   return <>
     <button className="drawer-scrim" aria-label="Close complaint details" onClick={onClose} />
     <aside className="detail-drawer" role="dialog" aria-modal="true" aria-label={`Complaint ${id}`}>
@@ -74,8 +66,7 @@ export function DetailDrawer({ id, now, onClose, onChanged, onSelect }: { id: st
 
         {err && <div className="error-banner">{err}</div>}
         <div className="drawer-actions">
-          {c.status === 'Resolved' || c.status === 'Closed' ? <div className="feedback-box"><span>Citizen feedback (verification)</span><div>{[1, 2, 3, 4, 5].map((n) => <button key={n} aria-label={`${n} stars`} onClick={() => rate(n)} className={n <= (rating || c.feedback_rating || 0) ? 'on' : ''}><Star size={18} /></button>)}</div><small>1–2 stars reopens the ticket</small></div>
-            : <label className="status-action-label">Move ticket to<select value={next} onChange={(e) => setNext(e.target.value)}>{c.allowed_next.map((s) => <option key={s}>{s}</option>)}</select><ChevronDown size={14} /></label>}
+          {c.status !== 'Resolved' && c.status !== 'Closed' && <label className="status-action-label">Move ticket to<select value={next} onChange={(e) => setNext(e.target.value)}>{c.allowed_next.map((s) => <option key={s}>{s}</option>)}</select><ChevronDown size={14} /></label>}
           {c.status !== 'Resolved' && c.status !== 'Closed' && <button className="primary-button" disabled={!next} onClick={move}>Update status</button>}
           {c.status === 'Resolved' && <button className="outline-button" onClick={() => { setNext('Reopened'); api.setStatus(c.id, 'Reopened', 'Operator reopened').then((r) => { setC(r); onChanged(`${c.id} reopened`) }) }}>Reopen</button>}
         </div>
