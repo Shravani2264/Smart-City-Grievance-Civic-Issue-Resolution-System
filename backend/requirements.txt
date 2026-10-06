@@ -3,3 +3,7 @@ uvicorn>=0.24
 pydantic>=2.5
 python-multipart>=0.0.6
 groq>=0.30
+# LangChain stack: used for prompt templating, structured output, and LCEL chains
+langchain>=0.3
+langchain-core>=0.3
+langchain-groq>=0.2
