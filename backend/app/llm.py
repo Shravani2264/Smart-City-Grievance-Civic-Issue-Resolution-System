@@ -4,16 +4,16 @@ Every caller has a deterministic fallback, so the system runs fully offline when
 configured (or when CIVIC_AI_MODE=rules). Set GROQ_API_KEY to enable AI mode.
 
 Models are configurable:
-  GROQ_MODEL         text model   (default llama-3.3-70b-versatile)
-  GROQ_VISION_MODEL  photo model  (default meta-llama/llama-4-scout-17b-16e-instruct)
+  GROQ_MODEL         text model   (default openai/gpt-oss-120b)
+  GROQ_VISION_MODEL  photo model  (default qwen/qwen3.8-27b)
 """
 import json
 import logging
 import os
 
 log = logging.getLogger("civic.llm")
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 
 _client = None
 _disabled_reason = None
@@ -47,6 +47,11 @@ def status():
             "vision_model": VISION_MODEL if _client else None, "reason": _disabled_reason}
 
 
+def _extra(model: str) -> dict:
+    """gpt-oss models are reasoning models: keep reasoning short so latency and token use stay low."""
+    return {"reasoning_effort": "low"} if "gpt-oss" in model else {}
+
+
 def _validate(data, schema):
     """Minimal schema check: required keys present, enums respected. Raises ValueError on mismatch."""
     if not isinstance(data, dict):
@@ -65,7 +70,7 @@ def _validate(data, schema):
     return data
 
 
-def structured(system: str, prompt: str, schema: dict, image_b64: str | None = None, image_type: str | None = None, max_tokens: int = 1200):
+def structured(system: str, prompt: str, schema: dict, image_b64: str | None = None, image_type: str | None = None, max_tokens: int = 2500):
     """Ask Groq for JSON matching `schema`. Returns a dict, or None on any failure (caller falls back to rules)."""
     client = _get_client()
     if client is None:
@@ -87,6 +92,7 @@ def structured(system: str, prompt: str, schema: dict, image_b64: str | None = N
             response_format={"type": "json_object"},
             temperature=0.1,
             max_completion_tokens=max_tokens,
+            **_extra(model),
         )
         choice = resp.choices[0]
         if choice.finish_reason == "length":
@@ -100,7 +106,7 @@ def structured(system: str, prompt: str, schema: dict, image_b64: str | None = N
     return None
 
 
-def text(system: str, prompt: str, max_tokens: int = 1500):
+def text(system: str, prompt: str, max_tokens: int = 3000):
     client = _get_client()
     if client is None:
         return None
@@ -111,6 +117,7 @@ def text(system: str, prompt: str, max_tokens: int = 1500):
             messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             temperature=0.3,
             max_completion_tokens=max_tokens,
+            **_extra(MODEL),
         )
         return resp.choices[0].message.content or None
     except (groq.APIStatusError, groq.APIConnectionError) as e:
