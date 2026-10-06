@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Activity, AlertOctagon, BarChart3, Bell, Bot, Building2, ChevronRight, CloudRain, FastForward, Map, Menu, RotateCcw, Search, Sparkles,
-  TicketCheck, X, CheckCircle2,
+  TicketCheck, X, CheckCircle2, Users,
 } from 'lucide-react'
 import { api, clock, type Dashboard, type Health } from './api'
 import { AgentsView, ComplaintsView, DepartmentsView, EscalationsView, InsightsView, MapView, Overview, TransparencyView } from './views'
 import { DetailDrawer } from './drawer'
 import { IntakeModal } from './intake'
+import { CitizenPortal } from './citizen'
 
 const NAV = [
   { label: 'Overview', icon: Activity },
@@ -19,7 +20,22 @@ const NAV = [
   { label: 'Agents', icon: Bot },
 ]
 
+type Role = 'admin' | 'citizen'
+
 export default function App() {
+  const roleFromHash = (): Role => {
+    const h = window.location.hash
+    if (h.startsWith('#citizen')) return 'citizen'
+    if (h && h !== '#') return 'admin' // a deep link to any control-center view
+    return (localStorage.getItem('civic-role') as Role) || 'citizen'
+  }
+  const [role, setRoleState] = useState<Role>(roleFromHash)
+  const setRole = useCallback((r: Role) => {
+    setRoleState(r)
+    try { localStorage.setItem('civic-role', r) } catch { /* private mode */ }
+    window.location.hash = r === 'citizen' ? '#citizen' : '#overview'
+  }, [])
+
   const fromHash = () => NAV.find((n) => `#${n.label.toLowerCase().replace(' ', '-')}` === window.location.hash.split('/')[0])?.label ?? 'Overview'
   const [view, setViewState] = useState(fromHash)
   const setView = useCallback((v: string) => { setViewState(v); window.history.replaceState(null, '', `#${v.toLowerCase().replace(' ', '-')}`) }, [])
@@ -66,6 +82,10 @@ export default function App() {
   const ai = health?.ai
   const common = { now, version, onSelect: setSelected }
 
+  if (role === 'citizen') {
+    return <CitizenPortal aiEnabled={!!ai?.enabled} onSwitchToAdmin={() => setRole('admin')} />
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
@@ -74,6 +94,7 @@ export default function App() {
           <span className="brand-name">civic<span>pulse</span><small>URBAN OPERATIONS</small></span>
         </a>
         <div className="city-switcher"><span className="city-avatar">M</span><span><strong>Mumbai</strong><small>BMC (MCGM) · 24 wards</small></span></div>
+        <button className="role-switch" onClick={() => setRole('citizen')}><Users size={15} />Citizen portal<ChevronRight size={14} /></button>
         <div className="nav-caption">CONTROL CENTER</div>
         <nav aria-label="Main navigation">
           {NAV.map(({ label, icon: Icon }) => (
