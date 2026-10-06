@@ -86,19 +86,24 @@ cd backend; python -m eval.evaluate            # offline (rules engine)
 cd backend; python -m eval.evaluate --ai       # live LLM via LangChain
 ```
 
-Runs a labelled gold set through the real pipeline and reports classification accuracy, routing accuracy, priority-band agreement, duplicate-detection precision/recall, prompt-injection resistance, and per-agent latency. Representative run (synthetic gold set of 20 complaints + probes):
+Runs a labelled gold set through the real pipeline and reports classification accuracy, routing accuracy, priority-band agreement, duplicate-detection precision/recall, prompt-injection resistance (detection recall + false-positive rate), and per-agent latency. The gold set includes hard cases on purpose — paraphrases, Hinglish, ambiguous wording, obfuscated attacks — so the numbers are honest rather than perfect. Representative **rules-engine** run (35 labelled complaints + 33 injection attacks + 4 benign probes):
 
-| Metric | Rules engine | AI mode (Groq) |
-|---|---|---|
-| Issue-type accuracy | 90% | 95% |
-| Category / routing accuracy | 90% | 95% |
-| Priority-band acceptable | 100% | 100% |
-| Duplicate precision / recall | 100% / 100% | 100% / 100% |
-| Prompt-injection detected | 100% | 100% |
-| Pipeline stayed safe under injection | 100% | 100% |
-| End-to-end latency (mean) | ~24 ms | ~3.8 s |
+| Metric | Rules engine |
+|---|---|
+| Issue-type accuracy | 85.7% |
+| Category / routing accuracy | 85.7% |
+| Priority-band acceptable | 91.4% |
+| Duplicate precision / recall | 100% / 88.9% |
+| Prompt-injection detection recall | 97.0% |
+| Prompt-injection false-positive rate | 0% |
+| Pipeline stayed safe under injection | 100% |
+| End-to-end latency (mean) | ~24 ms |
 
-The LLM lifts accuracy a few points at a large latency cost (the Groq round-trip). Numbers vary with the model and free-tier rate limits — during one AI run a Groq 429 was caught and the pipeline fell back to rules mid-flight, exactly as designed.
+Reading the numbers:
+
+- **Classification 85.7%** is the *keyword* fallback on a deliberately hard set (paraphrases, Hinglish, ambiguous wording). The LLM path (`--ai`) handles these far better — on a cleaner 20-case set it scored ~95% — at a ~10× latency cost (~3.8 s vs ~24 ms per complaint, the Groq round-trip). This gap is the point: it shows *why* the LLM matters.
+- **Duplicate recall 88.9%** — the one miss is a true recurrence of an incident seeded ~12 days ago, which the 7-day dedup window intentionally does not merge. Precision is 100%: it never wrongly merges distinct issues.
+- **Injection 97.0%** — the single miss is a leetspeak-obfuscated attack (`1gn0re all prev10us…`). It still causes no harm: **pipeline-safe stayed 100%** because routing/SLA/priority/status are rule-based, never model-controlled — so even an undetected injection can't change a ticket. False positives on benign complaints (some containing trigger-ish words) were 0%.
 
 ## Notes
 
