@@ -2,7 +2,13 @@
 
 All timestamps are epoch seconds on the *simulated* clock: real time plus an offset that the
 operations console can advance ("time warp") so SLA breaches and escalations can be demoed live.
+
+Durability: WAL journalling means committed writes survive a crash. Multi-step writes that must be
+all-or-nothing (e.g. merging a report into an incident) run inside `with db.transaction():` so a
+crash mid-merge can never leave a half-updated cluster. On startup `recover()` re-syncs any state
+that a crash could have left inconsistent, which makes the agent pipeline safe to resume.
 """
+import contextlib
 import json
 import os
 import sqlite3
@@ -16,6 +22,31 @@ _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 _conn.row_factory = sqlite3.Row
 _conn.execute("PRAGMA journal_mode=WAL")
 _conn.execute("PRAGMA synchronous=NORMAL")
+
+# When inside a transaction() block, individual writes defer their commit so the whole block is atomic.
+_txn_depth = 0
+
+
+@contextlib.contextmanager
+def transaction():
+    """Group several writes into one atomic unit. Commits on success, rolls back on any exception."""
+    global _txn_depth
+    with _lock:
+        _txn_depth += 1
+        try:
+            yield
+            _txn_depth -= 1
+            if _txn_depth == 0:
+                _conn.commit()
+        except Exception:
+            _txn_depth -= 1
+            _conn.rollback()
+            raise
+
+
+def _commit():
+    if _txn_depth == 0:
+        _conn.commit()
 
 JSON_COLS = {"urgency_signals", "trace", "history", "verification", "severity_factors", "location_meta", "image_analysis", "escalations"}
 
@@ -72,7 +103,7 @@ def get_setting(key, default=None):
 def set_setting(key, value):
     with _lock:
         _conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (key, json.dumps(value)))
-        _conn.commit()
+        _commit()
 
 
 def now() -> float:
@@ -99,7 +130,7 @@ def insert(table, d):
     cols = ",".join(d)
     with _lock:
         _conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({','.join('?' * len(d))})", tuple(d.values()))
-        _conn.commit()
+        _commit()
 
 
 def update(table, key, d):
@@ -108,7 +139,7 @@ def update(table, key, d):
     d = _encode(d)
     with _lock:
         _conn.execute(f"UPDATE {table} SET {','.join(f'{k}=?' for k in d)} WHERE id=?", (*d.values(), key))
-        _conn.commit()
+        _commit()
 
 
 def get(table, key):
@@ -131,9 +162,35 @@ def log_event(agent, message, complaint_id=None, level="info", at=None):
     with _lock:
         _conn.execute("INSERT INTO events(at, agent, complaint_id, level, message) VALUES (?,?,?,?,?)",
                       (at if at is not None else now(), agent, complaint_id, level, message))
-        _conn.commit()
+        _commit()
 
 
 def next_complaint_id():
     n = scalar("SELECT COUNT(*) FROM complaints") or 0
-    return f"NB-{24001 + n}"
+    return f"CMP-{24001 + n}"
+
+
+def recover() -> dict:
+    """Startup crash-recovery: re-sync anything a mid-pipeline crash could have left inconsistent.
+
+    Idempotent and safe to run on every boot. Returns a summary of what it fixed.
+      * cluster counts re-derived from their members (a crash during a merge could skew them)
+      * cluster primary/status re-pointed if the recorded primary vanished
+    This is what lets the durable agent pipeline resume cleanly after an unclean shutdown.
+    """
+    fixed_counts = 0
+    with transaction():
+        for cl in query("SELECT id, count, primary_id FROM clusters"):
+            members = query("SELECT id, status, is_primary FROM complaints WHERE cluster_id=?", (cl["id"],))
+            real = len(members)
+            if real and real != cl["count"]:
+                update("clusters", cl["id"], {"count": real})
+                fixed_counts += 1
+            if members and not any(m["is_primary"] for m in members):
+                # lost primary -> promote the earliest member
+                lead = query("SELECT id, status FROM complaints WHERE cluster_id=? ORDER BY created_at LIMIT 1", (cl["id"],))[0]
+                update("complaints", lead["id"], {"is_primary": 1})
+                update("clusters", cl["id"], {"primary_id": lead["id"], "status": lead["status"]})
+    if fixed_counts:
+        log_event("Master Orchestrator", f"Crash recovery: re-synced {fixed_counts} incident cluster counts", level="warning")
+    return {"clusters_resynced": fixed_counts}

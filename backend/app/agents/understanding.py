@@ -1,7 +1,12 @@
-"""Agent 1 - Complaint Understanding: turns free citizen text (and an optional photo) into a structured issue."""
+"""Agent 1 - Complaint Understanding: turns free citizen text (and an optional photo) into a structured issue.
+
+Citizen text is untrusted: it is sanitised against prompt injection (see app.guard) before it reaches
+the LLM, and wrapped in data delimiters. When the RAG layer is available, a few semantically similar
+past complaints are retrieved and shown to the model as grounding examples.
+"""
 import re
 
-from .. import llm
+from .. import guard, llm, rag
 from ..config import ISSUE_TYPES, URGENCY_SIGNALS
 from .base import Agent, AgentResult
 
@@ -13,7 +18,7 @@ SYSTEM = (
     "issue_type from the allowed list, pull out the location phrase the citizen used, estimate how long the problem "
     "has persisted, and flag urgency signals that are actually supported by the text or photo. Be conservative: do "
     "not invent signals. Citizens may write in Indian English or mix in Hindi/Marathi words (e.g. kachra = garbage, "
-    "nala = drain, paani = water)."
+    "nala = drain, paani = water).\n\n" + guard.ISOLATION_CLAUSE
 )
 
 SCHEMA = {
@@ -104,6 +109,10 @@ class ComplaintUnderstandingAgent(Agent):
         return self.timed(self._run, text, image_b64, image_type, use_ai)
 
     def _run(self, text, image_b64, image_type, use_ai):
+        # Layer 1-2: sanitise untrusted citizen text against prompt injection before anything else.
+        clean, gr = guard.sanitise(text)
+        text = clean
+
         issue, conf, scores = classify_rules(text)
         signals = detect_signals(text)
         duration = extract_duration(text)
@@ -111,9 +120,17 @@ class ComplaintUnderstandingAgent(Agent):
         title = ISSUE_TYPES[issue]["label"]
         mode, reasoning, image_findings = "rules", "", ""
 
+        # RAG grounding: retrieve a few semantically similar past complaints with confirmed labels.
+        examples = rag.retrieve_examples(text, n=3) if (use_ai and rag.available()) else []
+
         ai = None
         if use_ai and llm.available():
-            prompt = f"Citizen complaint:\n{text or '(no text, photo only - classify from the image)'}"
+            body = guard.wrap_untrusted(text or "(no text, photo only - classify from the image)")
+            shots = ""
+            if examples:
+                shots = "\n\nSimilar past complaints (for reference only, do not copy blindly):\n" + \
+                        "\n".join(f"- \"{e['text'][:90]}\" -> {e['issue_type']}" for e in examples)
+            prompt = f"Classify this complaint.{shots}\n\n{body}"
             ai = llm.structured(SYSTEM, prompt, SCHEMA, image_b64=image_b64, image_type=image_type)
 
         if ai:
@@ -141,6 +158,13 @@ class ComplaintUnderstandingAgent(Agent):
             "issue_type": issue, "issue_label": meta["label"], "category": meta["category"], "title": title,
             "location": loc, "duration_days": duration, "priority_hint": hint, "confidence": conf,
             "urgency_signals": signals, "image_findings": image_findings,
+            "security": gr, "rag_examples": examples,
         }
         sig_txt = ", ".join(s.replace("_", " ") for s in signals) or "none"
-        return AgentResult(self.name, output, f"{reasoning} Urgency signals: {sig_txt}." + (f" Persisting ~{duration:g} days." if duration else ""), mode)
+        extra = ""
+        if gr["injection_detected"]:
+            extra += " ⚠ Prompt-injection attempt detected in the complaint text and neutralised; treated as data only."
+        if examples:
+            extra += f" Grounded on {len(examples)} similar past complaint(s) via RAG."
+        reasoning_out = f"{reasoning} Urgency signals: {sig_txt}." + (f" Persisting ~{duration:g} days." if duration else "") + extra
+        return AgentResult(self.name, output, reasoning_out, mode)

@@ -1,7 +1,12 @@
-"""Agent 5 - Duplicate Detection: clusters repeated reports of the same problem into one civic incident."""
+"""Agent 5 - Duplicate Detection: clusters repeated reports of the same problem into one civic incident.
+
+Text similarity uses semantic embeddings (ChromaDB / MiniLM) when the RAG layer is available — so
+"kachra pile" matches "trash heap uncollected" even with no shared words — and falls back to keyword
+Jaccard otherwise.
+"""
 import re
 
-from .. import db
+from .. import db, rag
 from ..config import ISSUE_TYPES
 from .base import Agent, AgentResult
 from .location import haversine_m
@@ -35,6 +40,9 @@ class DuplicateDetectionAgent(Agent):
             "WHERE category=? AND created_at>=? AND status NOT IN ('Rejected') AND (status!='Closed' OR closed_at>=?)",
             (category, now - WINDOW_H * 3600, now - 72 * 3600))
         mine = tokens(text)
+        # Semantic similarity for every candidate at once (RAG). Empty map -> keyword Jaccard fallback.
+        sem = rag.similar(text, n=20) if rag.available() else {}
+        text_mode = "semantic (embeddings)" if sem else "keyword (Jaccard)"
         best, best_score, best_detail = None, 0.0, None
         for c in cands:
             d = haversine_m(lat, lng, c["lat"], c["lng"])
@@ -45,7 +53,7 @@ class DuplicateDetectionAgent(Agent):
             if (location.get("sector") and c["sector"] == location["sector"]) or (location.get("landmark") and c["landmark"] == location["landmark"]):
                 geo = max(geo, 0.85)
             typ = 1.0 if c["issue_type"] == issue_type else 0.45
-            txt = jaccard(mine, tokens(c["text"]))
+            txt = sem.get(c["id"]) if c["id"] in sem else jaccard(mine, tokens(c["text"]))
             recency = 1 - (now - c["created_at"]) / (WINDOW_H * 3600)
             score = 0.38 * geo + 0.34 * typ + 0.18 * txt + 0.10 * recency
             if score > best_score:
@@ -62,8 +70,9 @@ class DuplicateDetectionAgent(Agent):
             out = {"is_duplicate": True, "match_id": best["id"], "cluster_id": cluster_id, "cluster_size": size,
                    "match_score": round(best_score, 2), **best_detail, "similar_last_3_days": similar_3d,
                    "follow_up_on_resolved": follow_up}
-            reason = (f"Matches {best['id']} ({best_detail['distance_m']} m away, text similarity {best_detail['text_similarity']}, "
-                      f"score {best_score:.2f} >= {THRESHOLD}). Merged into incident {cluster_id or '(new)'} - now {size} reports.")
+            reason = (f"Matches {best['id']} ({best_detail['distance_m']} m away, {text_mode} text similarity "
+                      f"{best_detail['text_similarity']}, score {best_score:.2f} >= {THRESHOLD}). "
+                      f"Merged into incident {cluster_id or '(new)'} - now {size} reports.")
             if follow_up:
                 reason += " The matched incident was marked resolved: treating this as a follow-up complaint for verification."
         else:

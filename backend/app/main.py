@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, llm
+from . import db, llm, rag
 from .agents.orchestrator import Orchestrator
 from .agents.predictive import PredictiveAgent
 from .agents.reporting import TransparencyReportAgent, efficiency
@@ -31,6 +31,9 @@ async def lifespan(_app):
     if not db.scalar("SELECT COUNT(*) FROM complaints"):
         from .seed import seed
         await asyncio.to_thread(seed)
+    else:
+        # Durable execution: resume cleanly after an unclean shutdown.
+        await asyncio.to_thread(db.recover)
 
     async def loop():
         while True:
@@ -89,8 +92,8 @@ def view(c, now=None, full=False):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ai": llm.status(), "clock": db.now(), "clock_offset_hours": db.get_setting("clock_offset_hours", 0),
-            "agents": len(AGENTS)}
+    return {"ok": True, "ai": llm.status(), "rag": rag.status(), "clock": db.now(),
+            "clock_offset_hours": db.get_setting("clock_offset_hours", 0), "agents": len(AGENTS)}
 
 
 @app.get("/api/agents")

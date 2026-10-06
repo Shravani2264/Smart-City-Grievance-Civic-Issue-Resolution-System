@@ -32,7 +32,24 @@ Copy `backend/.env.example` to `backend/.env` and set `GROQ_API_KEY`. In AI mode
 - **Photo classification** uses the vision model `qwen/qwen3.8-27b`.
 - **The monthly transparency narrative** is written by the LLM from the computed figures.
 
-Without a key, or with `CIVIC_AI_MODE=rules`, a deterministic rules engine takes over. The demo works offline. LLM output is schema-validated, and anything malformed falls back to rules.
+The LLM is called through **LangChain** (`langchain-groq` + LCEL chains `prompt | llm | parser`) — see `backend/app/llm.py`. Without a key, or with `CIVIC_AI_MODE=rules`, a deterministic rules engine takes over. The demo works offline. LLM output is schema-validated, and anything malformed falls back to rules.
+
+### RAG + vector search (ChromaDB)
+
+Every complaint is embedded (MiniLM, 384-d, local ONNX — no PyTorch, runs offline) into a **ChromaDB** vector store. Two agents use it:
+
+- **Duplicate Detection** scores semantic similarity, so "kachra pile" matches "trash heap uncollected" and "nala choked" matches "drain blocked" with no shared keywords. Falls back to keyword Jaccard if ChromaDB is absent.
+- **Complaint Understanding** retrieves a few similar past complaints with their confirmed issue types and feeds them to the LLM as grounding examples (few-shot RAG).
+
+Optional: `pip install chromadb` enables it; the system runs unchanged without it. `GET /api/health` reports the RAG status and vector count.
+
+### Prompt-injection defence (`backend/app/guard.py`)
+
+Citizen text is untrusted and flows into an LLM prompt, so it is defended in three layers: **detect** known injection/jailbreak patterns, **neutralise** role-delimiter tokens and cap length, and **isolate** the text inside `<citizen_complaint>` data markers with a system instruction never to obey anything inside them. Defence in depth: every consequential decision (routing, SLA, priority band, status) is made by the rules engine, never the model — so even an undetected injection cannot change where a ticket goes or close it. Detected attempts are flagged in the agent trace and lightly dent reporter reputation.
+
+### Durable execution
+
+All state lives in SQLite (WAL). Multi-step writes that must be atomic — merging a report into an incident — run inside `with db.transaction():`, so a crash mid-merge can never leave a half-updated cluster. On startup `db.recover()` re-syncs any state an unclean shutdown could have skewed (cluster counts, lost primaries), and the 20-second control loop recomputes from the database each tick, so the pipeline resumes cleanly after a restart.
 
 ## The agents (`backend/app/agents/`)
 
@@ -71,8 +88,29 @@ cd backend; python -m pytest -q tests
 
 The tests cover the problem-statement scenario, critical-hazard routing, landmark geocoding, the full lifecycle with a citizen-triggered reopen, escalation to L3 after a time warp, reports and forecasts, and classifier paraphrases.
 
+## Evaluation
+
+```powershell
+cd backend; python -m eval.evaluate            # offline (rules engine)
+cd backend; python -m eval.evaluate --ai       # live LLM via LangChain
+```
+
+Runs a labelled gold set through the real pipeline and reports classification accuracy, routing accuracy, priority-band agreement, duplicate-detection precision/recall, prompt-injection resistance, and per-agent latency. Representative run (synthetic gold set of 20 complaints + probes):
+
+| Metric | Rules engine | AI mode (Groq) |
+|---|---|---|
+| Issue-type accuracy | 90% | 95% |
+| Category / routing accuracy | 90% | 95% |
+| Priority-band acceptable | 100% | 100% |
+| Duplicate precision / recall (semantic) | 100% / 100% | 100% / 100% |
+| Prompt-injection detected | 100% | 100% |
+| Pipeline stayed safe under injection | 100% | 100% |
+| End-to-end latency (mean) | ~0.44 s | ~3.8 s |
+
+The LLM lifts accuracy a few points at a ~10× latency cost (the Groq round-trip); semantic dedup adds ~190 ms per complaint for the query embedding. Numbers vary with the model and free-tier rate limits — during one AI run a Groq 429 was caught and the pipeline fell back to rules mid-flight, exactly as designed.
+
 ## Notes
 
 - The system is configured for **Mumbai (BMC)** with all 24 administrative wards (A through T). Ward population, elevation and drainage-capacity figures are synthetic approximations for demo purposes. Landmark coordinates are real. The gazetteer is in `backend/app/config.py`.
 - Field crews and citizen feedback for historical tickets come from a deterministic simulator, so the control loop has something to act on. Tickets an operator touches leave the simulator.
-- Stack: FastAPI + SQLite (WAL) · React 19 + TypeScript + Vite · Groq SDK.
+- Stack: **LangChain** + Groq (LLM) · **ChromaDB** (RAG / vector search) · FastAPI + SQLite/WAL · React 19 + TypeScript + Vite.

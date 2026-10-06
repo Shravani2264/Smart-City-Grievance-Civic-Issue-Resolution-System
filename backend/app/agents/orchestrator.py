@@ -7,7 +7,7 @@ tick():    the continuous control loop - field progress, resolution verification
 import hashlib
 import time
 
-from .. import db
+from .. import db, rag
 from ..config import ISSUE_TYPES
 from .base import AgentResult
 from .duplicate import DuplicateDetectionAgent
@@ -38,7 +38,7 @@ class Orchestrator:
         self.reputation = ReputationAgent()
 
     def intake(self, text, location_text="", citizen_name="", citizen_id=None, channel="web", image_b64=None, image_type=None,
-               lat=None, lng=None, at=None, use_ai=True, simulate=False):
+               lat=None, lng=None, at=None, use_ai=True, simulate=False, index_rag=True):
         t_start = time.perf_counter()
         now = at if at is not None else db.now()
         cid = db.next_complaint_id()
@@ -87,39 +87,48 @@ class Orchestrator:
         # ---- incident clustering ----
         verif_note = "Closure requires citizen confirmation, no follow-up complaints, and a 48 h quiet period."
         primary = None
-        if do["is_duplicate"]:
-            match = db.get("complaints", do["match_id"])
-            cluster_id = match["cluster_id"]
-            primary = db.get("complaints", db.get("clusters", cluster_id)["primary_id"]) if cluster_id else match
-            if not cluster_id:
-                cluster_id = "INC-" + match["id"].split("-")[1]
-                db.insert("clusters", {"id": cluster_id, "issue_type": match["issue_type"], "category": match["category"], "ward": match["ward"],
-                                       "lat": match["lat"], "lng": match["lng"], "count": 1, "first_at": match["created_at"],
-                                       "last_at": match["created_at"], "primary_id": match["id"], "title": match["title"], "status": match["status"]})
-                db.update("complaints", match["id"], {"cluster_id": cluster_id, "is_primary": 1})
-                primary = {**primary, "cluster_id": cluster_id, "is_primary": 1}
-            cl = db.get("clusters", cluster_id)
-            db.update("clusters", cluster_id, {"count": cl["count"] + 1, "last_at": now})
-            record.update(cluster_id=cluster_id, is_primary=0, due_at=primary["due_at"], sla_hours=primary["sla_hours"],
-                          unit=primary["unit"], sim_factor=None)
-            record["history"].append({"status": record["status"], "at": now + 3, "actor": "Duplicate Detection",
-                                      "note": f"Merged into incident {cluster_id} (lead ticket {primary['id']})"})
-            if cl["count"] + 1 == 3:
-                self.reputation.adjust(primary["citizen_id"], +2, "helpful")
-            # Cluster growth raises the incident's severity
-            if po["severity_score"] > (primary["severity_score"] or 0):
-                db.update("complaints", primary["id"], {"severity_score": po["severity_score"], "priority": band(po["severity_score"])})
-            if do["follow_up_on_resolved"] and primary["status"] in ("Resolved", "Closed"):
-                verif_note = f"Follow-up on {primary['id']} which was marked {primary['status'].lower()} - reopening the incident for re-work."
-            else:
-                record["status"] = primary["status"]
-        trace.append(AgentResult(self.verification.name, {"plan": "citizen feedback + follow-up scan + 48 h confirmation"}, verif_note))
+        # Atomic: the whole merge + insert is one transaction, so a crash can never leave a half-merged incident.
+        with db.transaction():
+            if do["is_duplicate"]:
+                match = db.get("complaints", do["match_id"])
+                cluster_id = match["cluster_id"]
+                primary = db.get("complaints", db.get("clusters", cluster_id)["primary_id"]) if cluster_id else match
+                if not cluster_id:
+                    cluster_id = "INC-" + match["id"].split("-")[1]
+                    db.insert("clusters", {"id": cluster_id, "issue_type": match["issue_type"], "category": match["category"], "ward": match["ward"],
+                                           "lat": match["lat"], "lng": match["lng"], "count": 1, "first_at": match["created_at"],
+                                           "last_at": match["created_at"], "primary_id": match["id"], "title": match["title"], "status": match["status"]})
+                    db.update("complaints", match["id"], {"cluster_id": cluster_id, "is_primary": 1})
+                    primary = {**primary, "cluster_id": cluster_id, "is_primary": 1}
+                cl = db.get("clusters", cluster_id)
+                db.update("clusters", cluster_id, {"count": cl["count"] + 1, "last_at": now})
+                record.update(cluster_id=cluster_id, is_primary=0, due_at=primary["due_at"], sla_hours=primary["sla_hours"],
+                              unit=primary["unit"], sim_factor=None)
+                record["history"].append({"status": record["status"], "at": now + 3, "actor": "Duplicate Detection",
+                                          "note": f"Merged into incident {cluster_id} (lead ticket {primary['id']})"})
+                if cl["count"] + 1 == 3:
+                    self.reputation.adjust(primary["citizen_id"], +2, "helpful")
+                # Cluster growth raises the incident's severity
+                if po["severity_score"] > (primary["severity_score"] or 0):
+                    db.update("complaints", primary["id"], {"severity_score": po["severity_score"], "priority": band(po["severity_score"])})
+                if do["follow_up_on_resolved"] and primary["status"] in ("Resolved", "Closed"):
+                    verif_note = f"Follow-up on {primary['id']} which was marked {primary['status'].lower()} - reopening the incident for re-work."
+                else:
+                    record["status"] = primary["status"]
+            trace.append(AgentResult(self.verification.name, {"plan": "citizen feedback + follow-up scan + 48 h confirmation"}, verif_note))
 
-        db.insert("complaints", record)
-        self.reputation.record_report(citizen_id)
-        if primary is not None and do["follow_up_on_resolved"] and primary["status"] in ("Resolved", "Closed"):
-            self.verification.follow_up(db.get("complaints", primary["id"]), cid, now)
-            db.update("complaints", cid, {"status": db.get("complaints", primary["id"])["status"]})
+            # A detected prompt-injection attempt lightly dents reporter trust (never blocks the report).
+            if uo.get("security", {}).get("injection_detected"):
+                self.reputation.adjust(citizen_id, -4, "injection_attempt")
+
+            db.insert("complaints", record)
+            self.reputation.record_report(citizen_id)
+            if primary is not None and do["follow_up_on_resolved"] and primary["status"] in ("Resolved", "Closed"):
+                self.verification.follow_up(db.get("complaints", primary["id"]), cid, now)
+                db.update("complaints", cid, {"status": db.get("complaints", primary["id"])["status"]})
+
+        if index_rag:
+            rag.index(db.get("complaints", cid))  # best-effort semantic index (no-op if RAG disabled)
 
         open_in_ward = db.scalar("SELECT COUNT(*) FROM complaints WHERE ward=? AND category=? AND status NOT IN ('Resolved','Closed','Rejected')",
                                  (lo["ward"], uo["category"])) or 0
