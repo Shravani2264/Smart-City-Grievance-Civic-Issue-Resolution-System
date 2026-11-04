@@ -7,3 +7,5 @@ groq>=0.30
 langchain>=0.3
 langchain-core>=0.3
 langchain-groq>=0.2
+# MCP client (agents call external tool servers) + the bundled rainfall MCP server
+mcp>=1.2

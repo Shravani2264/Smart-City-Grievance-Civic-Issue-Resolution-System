@@ -63,10 +63,13 @@ export type Report = {
 }
 
 export type Prediction = {
-  rain_mm_hr: number; hours: number
+  rain_mm_hr: number; hours: number; rain_source?: string
   waterlogging: { ward: number; name: string; risk: number; level: string; drivers: string[]; action: string }[]
   hotspots: { ward: number; name: string; category: string; last_72h: number; expected: number; surge: number; projection_7d: number }[]
 }
+
+export type PolicyRef = { id: string; title: string; version: string; source: string; score?: number }
+export type PolicyAnswer = { question: string; answer: string; mode: string; citations: PolicyRef[]; retrieved: PolicyRef[]; ms: number }
 
 export type Health = { ok: boolean; clock: number; clock_offset_hours: number; agents: number; ai: { enabled: boolean; provider: string; model: string | null; vision_model: string | null; reason: string | null } }
 
@@ -94,6 +97,8 @@ export const api = {
   escalations: () => request<{ tickets: (Complaint & { escalations: Escalation[] })[]; feed: CivicEvent[]; ladder_30d: Record<string, number> }>('/escalations'),
   report: (days: number, narrative = false) => request<Report>(`/report?days=${days}&narrative=${narrative}`),
   predict: (rain?: number) => request<Prediction>(`/predict${rain !== undefined ? `?rain=${rain}` : ''}`),
+  predictLive: () => request<Prediction>('/predict?source=live'),
+  askPolicy: (question: string) => post<PolicyAnswer>('/policies/ask', { question }),
   citizens: () => request<{ top: Citizen[]; flagged: Citizen[]; total: number }>('/citizens'),
   agents: () => request<{ name: string; role: string; actions_24h: number }[]>('/agents'),
   advance: (hours: number) => post<{ progressed: number; escalations: number; verified_closed: number; reopened: number }>('/sim/advance', { hours }),

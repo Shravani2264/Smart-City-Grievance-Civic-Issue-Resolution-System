@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "rainfall": {
+      "command": "python",
+      "args": ["-m", "mcp_servers.rainfall_server"],
+      "description": "Open-Meteo rainfall forecast (bundled)"
+    }
+  }
+}

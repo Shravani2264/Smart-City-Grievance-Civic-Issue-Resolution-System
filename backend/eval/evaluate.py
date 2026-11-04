@@ -7,6 +7,8 @@ Runs a labelled set of complaints through the real pipeline and reports:
   * Duplicate-detection        - precision/recall on known duplicate pairs
   * Prompt-injection resistance - % of injection attempts correctly flagged AND still classified sanely
   * Latency                    - per-agent and end-to-end milliseconds
+  * LLM cascade                - how many complaints the rules engine settled vs. sent to a model; LLM calls/cache hits
+  * Policy RAG retrieval       - hit@1 / hit@3 / MRR of the FTS5 index on labelled policy questions
 
 Run (offline, rules engine):   cd backend && python -m eval.evaluate
 Run against the live LLM:      cd backend && python -m eval.evaluate --ai
@@ -25,7 +27,7 @@ import time
 # Isolate: throwaway DB before importing the app.
 os.environ.setdefault("CIVIC_DB", os.path.join(tempfile.mkdtemp(), "eval.db"))
 
-from app import db, guard, llm  # noqa: E402
+from app import db, guard, llm, policy_rag  # noqa: E402
 from app.agents.orchestrator import Orchestrator  # noqa: E402
 
 # --- Labelled gold set: (text, location, gold_issue_type, expected_band) ---
@@ -144,6 +146,29 @@ BENIGN_TRICKY = [
 ]
 
 
+# --- Policy questions -> the clause that answers them (retrieval gold set) ---
+POLICY_QA = [
+    ("When does an overdue ticket go to the Municipal Commissioner?", "POL-ESC-001"),
+    ("Is the crew warned before the deadline is missed?", "POL-ESC-002"),
+    ("Is anyone alerted immediately for a critical hazard?", "POL-ESC-003"),
+    ("How fast must an open manhole be fixed?", "POL-SLA-OPEN_MANHOLE"),
+    ("Deadline for clearing uncollected garbage", "POL-SLA-GARBAGE_UNCOLLECTED"),
+    ("How long does the water department have for contaminated drinking water?", "POL-SLA-CONTAMINATED_WATER"),
+    ("Who gets notified about a live wire sparking?", "POL-RTE-002"),
+    ("Are the traffic police informed about potholes on busy roads?", "POL-RTE-003"),
+    ("What if the address is vague and cannot be located?", "POL-RTE-004"),
+    ("When is a resolved ticket finally closed?", "POL-VER-001"),
+    ("Can a bad rating reopen my complaint?", "POL-VER-002"),
+    ("What happens if someone reports the same problem again after it was fixed?", "POL-VER-003"),
+    ("Are duplicate reports merged?", "POL-INT-001"),
+    ("Will my report be ignored if my reputation is low?", "POL-INT-002"),
+    ("What should the city do when heavy rain is forecast in a low-lying ward?", "POL-MON-001"),
+    ("Where does the rainfall forecast come from?", "POL-MON-002"),
+    ("Does the AI decide which department handles a complaint?", "POL-AI-001"),
+    ("How is prompt injection in complaint text handled?", "POL-AI-002"),
+]
+
+
 def band_ok(priority: str, expected: str) -> bool:
     order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
     if expected == "any":
@@ -170,6 +195,8 @@ def run(use_ai: bool):
               "llm": llm.status(), "seeded": n_seeded, "seed_seconds": round(seed_s, 1)}
 
     # --- Classification / routing / priority / latency ---
+    llm.reset_stats()
+    tiers = {}
     issue_hits = cat_hits = band_hits = 0
     e2e_ms, per_agent = [], {}
     for text, loc, gold_issue, exp_band in GOLD:
@@ -182,6 +209,9 @@ def run(use_ai: bool):
         band_hits += band_ok(c["priority"], exp_band)
         for s in (c["trace"] or []):
             per_agent.setdefault(s["agent"], []).append(s.get("ms", 0))
+            if s["agent"] == "Complaint Understanding":
+                tier = (s["output"].get("cascade") or {}).get("tier", "n/a")
+                tiers[tier] = tiers.get(tier, 0) + 1
 
     report["classification"] = {
         "n": len(GOLD),
@@ -189,6 +219,23 @@ def run(use_ai: bool):
         "category_accuracy": pct(cat_hits, len(GOLD)),
         "priority_band_ok": pct(band_hits, len(GOLD)),
     }
+    st = llm.status()["stats"]
+    report["cascade"] = {"tiers": tiers, "llm_calls": st["calls"], "llm_cache_hits": st["cache_hits"],
+                         "llm_failures": st["failures"], "by_model": st["by_model"],
+                         "threshold": float(os.environ.get("CIVIC_CASCADE_THRESHOLD", 0.85))}
+
+    # --- Policy RAG retrieval ---
+    h1 = h3 = 0
+    rr = []
+    t = time.perf_counter()
+    for q, gold in POLICY_QA:
+        ids = [c.id for c, _ in policy_rag.INDEX.search(q, k=5)]
+        h1 += ids[:1] == [gold]
+        h3 += gold in ids[:3]
+        rr.append(1 / (ids.index(gold) + 1) if gold in ids else 0.0)
+    report["policy_rag"] = {"n": len(POLICY_QA), "hit_at_1": pct(h1, len(POLICY_QA)), "hit_at_3": pct(h3, len(POLICY_QA)),
+                            "mrr": round(statistics.mean(rr), 3), "mean_query_ms": round((time.perf_counter() - t) * 1000 / len(POLICY_QA), 2),
+                            **policy_rag.INDEX.stats()}
 
     # --- Duplicate detection ---
     dup_tp = dup_fp = dup_fn = dup_tn = 0
@@ -251,6 +298,15 @@ def fmt(r: dict) -> str:
     L.append(f"    issue-type accuracy .......... {c['issue_type_accuracy']}%")
     L.append(f"    category/routing accuracy .... {c['category_accuracy']}%")
     L.append(f"    priority-band acceptable ..... {c['priority_band_ok']}%")
+    k = r["cascade"]
+    L.append("")
+    L.append(f"  LLM CASCADE  (rules confidence threshold {k['threshold']})")
+    L.append(f"    tiers ........................ " + ", ".join(f"{t}={n}" for t, n in sorted(k["tiers"].items())))
+    L.append(f"    LLM calls {k['llm_calls']}  cache hits {k['llm_cache_hits']}  failures {k['llm_failures']}")
+    q = r["policy_rag"]
+    L.append("")
+    L.append(f"  POLICY RAG RETRIEVAL  ({q['index']}, {q['clauses']} clauses, n={q['n']})")
+    L.append(f"    hit@1 {q['hit_at_1']}%  hit@3 {q['hit_at_3']}%  MRR {q['mrr']}  ({q['mean_query_ms']} ms/query)")
     d = r["duplicate_detection"]
     L.append("")
     L.append(f"  DUPLICATE DETECTION  ({d['mode']})")

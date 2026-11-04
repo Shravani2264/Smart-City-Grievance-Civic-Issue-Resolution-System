@@ -3,11 +3,19 @@
 Citizen text is untrusted: it is sanitised against prompt injection (see app.guard) before it reaches
 the LLM, and wrapped in data delimiters.
 """
+import os
 import re
 
 from .. import guard, llm
 from ..config import ISSUE_TYPES, URGENCY_SIGNALS
 from .base import Agent, AgentResult
+
+# Rules confidence at or above this skips the LLM. 0.85 was picked on the eval gold set: rules accept ~80% of
+# complaints there at ~96% accuracy; the rest go to the model.
+CASCADE_THRESHOLD = float(os.environ.get("CIVIC_CASCADE_THRESHOLD", 0.85))
+# Optional middle tier (distillation-style small model). Empty = off. Accepted only when self-confidence >= FAST_ACCEPT.
+FAST_MODEL = os.environ.get("GROQ_FAST_MODEL", "").strip()
+FAST_ACCEPT = float(os.environ.get("CIVIC_FAST_ACCEPT", 0.8))
 
 NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
              "a": 1, "an": 1, "few": 3, "several": 4}
@@ -119,11 +127,26 @@ class ComplaintUnderstandingAgent(Agent):
         title = ISSUE_TYPES[issue]["label"]
         mode, reasoning, image_findings = "rules", "", ""
 
-        ai = None
-        if use_ai and llm.available():
+        # Cascade (speculative-decoding idea at the application level): the rules engine is the cheap draft.
+        # The LLM is only consulted when the draft is uncertain, matched nothing, or there is a photo to read.
+        ai, cascade, model_used = None, "rules", None
+        rules_conf = conf
+        needs_llm = bool(image_b64) or issue == "other" or conf < CASCADE_THRESHOLD
+        if use_ai and llm.available() and needs_llm:
             body = guard.wrap_untrusted(text or "(no text, photo only - classify from the image)")
             prompt = f"Classify this complaint.\n\n{body}"
-            ai = llm.structured(SYSTEM, prompt, SCHEMA, image_b64=image_b64, image_type=image_type)
+            if FAST_MODEL and not image_b64:
+                ai = llm.structured(SYSTEM, prompt, SCHEMA, model=FAST_MODEL)
+                if ai and float(ai.get("confidence") or 0) >= FAST_ACCEPT:
+                    cascade, model_used = "fast-llm", FAST_MODEL
+                else:
+                    ai = None
+            if ai is None:
+                ai = llm.structured(SYSTEM, prompt, SCHEMA, image_b64=image_b64, image_type=image_type)
+                if ai:
+                    cascade, model_used = "llm", llm.VISION_MODEL if image_b64 else llm.MODEL
+        elif use_ai and llm.available():
+            cascade = "rules-accepted"
 
         if ai:
             mode = "ai+rules"
@@ -151,7 +174,10 @@ class ComplaintUnderstandingAgent(Agent):
             "location": loc, "duration_days": duration, "priority_hint": hint, "confidence": conf,
             "urgency_signals": signals, "image_findings": image_findings,
             "security": gr,
+            "cascade": {"tier": cascade, "rules_confidence": rules_conf, "threshold": CASCADE_THRESHOLD, "model": model_used},
         }
+        if cascade == "rules-accepted":
+            reasoning += f" Rules confidence {rules_conf:.2f} >= {CASCADE_THRESHOLD:.2f}: LLM call skipped (POL-AI-004)."
         sig_txt = ", ".join(s.replace("_", " ") for s in signals) or "none"
         extra = ""
         if gr["injection_detected"]:

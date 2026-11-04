@@ -153,7 +153,19 @@ ESCALATION_LEVELS = [
     {"level": 3, "at": 1.5, "role": "commissioner", "label": "Municipal Commissioner / NDRF"},
 ]
 
-WORKFLOW = ["Reported", "Assigned", "In Progress", "Inspection", "Resolved", "Closed"]
+# SLA multiplier by priority band (SLA agent + generated policy clauses POL-SLA-*)
+PRIORITY_FACTOR = {"CRITICAL": 0.5, "HIGH": 0.75, "MEDIUM": 1.0, "LOW": 1.25}
+SLA_FLOOR_H = 2
+
+# (issue_type, signal or None) -> extra department codes to notify (Routing agent + clause POL-RTE-003)
+SECONDARY_NOTIFY = {
+    ("open_manhole", None): ["TRF"], ("waterlogging", "traffic_impact"): ["TRF"], ("fallen_tree", "traffic_impact"): ["TRF"],
+    ("contaminated_water", None): ["PHD"], ("sewage_overflow", None): ["PHD"], ("garbage_uncollected", "public_health_risk"): ["PHD"],
+    ("drain_blockage", None): [], ("exposed_wire", None): ["ELE"], ("pothole", "traffic_impact"): ["TRF"],
+    ("mosquito_breeding", None): ["SWD"],
+}
+
+WORKFLOW = ["Reported","Assigned", "In Progress", "Inspection", "Resolved", "Closed"]
 TERMINAL = {"Closed", "Rejected"}
 
 # Relative performance of each department's field crews (1.0 = resolves right at SLA on average).

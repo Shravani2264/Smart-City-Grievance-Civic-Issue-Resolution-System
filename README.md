@@ -42,6 +42,37 @@ Citizen text is untrusted and flows into an LLM prompt, so it is defended in thr
 
 All state lives in SQLite (WAL). Multi-step writes that must be atomic — merging a report into an incident — run inside `with db.transaction():`, so a crash mid-merge can never leave a half-updated cluster. On startup `db.recover()` re-syncs any state an unclean shutdown could have skewed (cluster counts, lost primaries), and the 20-second control loop recomputes from the database each tick, so the pipeline resumes cleanly after a restart.
 
+### Policy RAG (`backend/app/policy_rag.py`, `backend/policies/`)
+
+The service rules live as versioned policy clauses (`POL-ESC-001`, `POL-VER-002`, …). Hand-written clauses are in `backend/policies/*.md`; one SLA clause per issue type (`POL-SLA-*`) and the co-notification clause are **generated from `config.py`**, so a cited SLA can never drift from the SLA that was applied. They are CivicPulse's own operating policy, not official BMC text.
+
+- **Index:** SQLite FTS5 with BM25 ranking and Porter stemming, built in memory at startup. No vector DB, no extra dependency, nothing stored on the OneDrive-synced path.
+- **Citations on decisions:** the SLA, Routing, Escalation and Verification agents attach the clause behind each decision (`output.policy`), and it shows in the agent trace.
+- **Ask the policy:** `POST /api/policies/ask` retrieves the top clauses, and the LLM answers *only* from them. Cited IDs are checked against what was retrieved, and invented IDs are removed. Offline, it returns an extractive answer. The Transparency page has a panel for this.
+- **Grounded narrative:** the monthly report prompt includes retrieved clauses and cites them.
+- Also: `GET /api/policies?q=…` for search and `GET /api/policies/{id}` for a single clause.
+
+### MCP client (`backend/app/mcp_client.py`)
+
+Agents call tools on external **Model Context Protocol** servers. The bundled server `backend/mcp_servers/rainfall_server.py` exposes `get_rainfall_forecast` (Open-Meteo, no key needed). The Predictive agent uses it when you press **Live forecast (MCP)** on the Insights page (`/api/predict?source=live`).
+
+- Sessions are persistent: one background loop, one server process reused for every call. They are warmed at startup.
+- Each call has a timeout and a TTL cache, and a failed server is retried after 60 s. Tool output is validated (0–150 mm/h) and falls back to the manual setting (POL-AI-003).
+- To add servers, copy `backend/mcp_servers.example.json` to `backend/mcp_servers.json`. Check status at `GET /api/mcp`. Disable with `CIVIC_MCP=off`.
+
+### Optimisations
+
+Of the usual "make an LLM faster" techniques, quantization, KV cache, batching and parallelism run on Groq's side. These are the application-level ones:
+
+| Technique | Implementation |
+|---|---|
+| Speculative decoding → **rules-first cascade** | The rules engine is the cheap "draft". The LLM is called only when rules confidence is below `CIVIC_CASCADE_THRESHOLD` (0.85), nothing matched, or a photo is attached |
+| Distillation → **optional small-model tier** | Set `GROQ_FAST_MODEL=openai/gpt-oss-20b` to try a small model first and accept it only when its confidence is ≥ 0.8 |
+| KV caching → **stable prompt prefix + response cache** | The system+schema prefix is byte-identical on every call (provider prefix caching). Identical requests are served from an in-process LRU (`CIVIC_LLM_CACHE_TTL`) |
+| Telemetry | LLM calls, cache hits, failures and mean latency per model in `/api/health` and the eval report |
+
+Eval, AI mode, same session (`python -m eval.evaluate --ai`): with the cascade, **7 LLM calls instead of 35 (−80%)** for the 35 gold complaints, and issue-type accuracy unchanged at 97.1%. Mean end-to-end latency was 155 ms with the cascade vs 3,144 ms without it (Groq latency varies between runs; the call reduction is the stable number).
+
 ## The agents (`backend/app/agents/`)
 
 | # | Agent | What it decides |
@@ -77,7 +108,7 @@ Supporting agents: **Predictive Intelligence**, which models rainfall against dr
 cd backend; python -m pytest -q tests
 ```
 
-The tests cover the problem-statement scenario, critical-hazard routing, landmark geocoding, the full lifecycle with a citizen-triggered reopen, escalation to L3 after a time warp, reports and forecasts, and classifier paraphrases.
+The tests cover the problem-statement scenario, critical-hazard routing, landmark geocoding, the full lifecycle with a citizen-triggered reopen, escalation to L3 after a time warp, reports and forecasts, and classifier paraphrases. `test_mcp_rag.py` covers policy retrieval and citation grounding, the MCP client (against an offline fake server), failure fallback, and the LLM cascade.
 
 ## Evaluation
 

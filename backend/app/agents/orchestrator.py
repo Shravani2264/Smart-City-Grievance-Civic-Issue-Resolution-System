@@ -7,7 +7,7 @@ tick():    the continuous control loop - field progress, resolution verification
 import hashlib
 import time
 
-from .. import db
+from .. import db, policy_rag
 from ..config import ISSUE_TYPES
 from .base import AgentResult
 from .duplicate import DuplicateDetectionAgent
@@ -115,7 +115,10 @@ class Orchestrator:
                     verif_note = f"Follow-up on {primary['id']} which was marked {primary['status'].lower()} - reopening the incident for re-work."
                 else:
                     record["status"] = primary["status"]
-            trace.append(AgentResult(self.verification.name, {"plan": "citizen feedback + follow-up scan + 48 h confirmation"}, verif_note))
+            vrefs, vcite = policy_rag.cite("POL-VER-001", "POL-VER-003" if do["follow_up_on_resolved"] else "",
+                                           "POL-INT-001" if do["is_duplicate"] else "")
+            trace.append(AgentResult(self.verification.name, {"plan": "citizen feedback + follow-up scan + 48 h confirmation", "policy": vrefs},
+                                     verif_note + vcite))
 
             # A detected prompt-injection attempt lightly dents reporter trust (never blocks the report).
             if uo.get("security", {}).get("injection_detected"):

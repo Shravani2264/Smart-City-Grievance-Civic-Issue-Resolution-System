@@ -360,3 +360,16 @@
   .cz-track-form { flex-direction: column; }
 }
 @media (max-width: 440px) { .cz-how-grid { grid-template-columns: 1fr; } .cz-hero-actions .primary-button, .cz-hero-actions .outline-button { width: 100%; } }
+
+/* Policy RAG panel */
+.policy-panel { grid-column: 1 / -1; }
+.policy-form { display: flex; gap: 8px; margin-top: 10px; }
+.policy-form input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid #dde4dd; border-radius: 4px; background: #fff; font-size: 12px; }
+.policy-examples { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.policy-answer { margin-top: 12px; padding: 12px; border: 1px solid #e4eee5; border-radius: 4px; background: #f7fbf7; font-size: 12px; line-height: 1.5; }
+.policy-answer p { margin: 0 0 6px; }
+.policy-cites { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.policy-cite { padding: 2px 7px; border: 1px solid #cfe0d3; border-radius: 10px; color: #3f6b4d; background: #fff; font-size: 10px; font-weight: 600; }
+.policy-answer details { font-size: 11px; }
+.policy-answer ul { margin: 6px 0 0; padding-left: 18px; }
+@media (max-width: 520px) { .policy-form { flex-direction: column; } }

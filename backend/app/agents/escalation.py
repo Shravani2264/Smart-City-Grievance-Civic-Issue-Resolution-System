@@ -1,5 +1,5 @@
 """Agent 7 - Escalation: watches every open ticket against its SLA and climbs the escalation ladder on delay."""
-from .. import db
+from .. import db, policy_rag
 from ..config import COMMISSIONER, DEPARTMENTS, EMERGENCY_TEAM, ESCALATION_LEVELS
 from .base import Agent, AgentResult
 from .sla import sla_state
@@ -22,13 +22,15 @@ class EscalationAgent(Agent):
     def plan(self, priority, routing, sla) -> AgentResult:
         def _plan():
             immediate = priority == "CRITICAL"
-            out = {"immediate_alert": immediate,
+            refs, cite = policy_rag.cite("POL-ESC-001", "POL-ESC-002", "POL-ESC-003" if immediate else "")
+            out = {"immediate_alert": immediate, "policy": refs,
                    "ladder": [{"level": p["level"], "role": p["label"], "after_h": p["after_h"]} for p in sla["escalation_plan"]]}
             first = sla["escalation_plan"][0]
             reason = (f"If unresolved after {first['after_h']:g} h -> {routing['supervisor']}; at SLA breach ({sla['sla_hours']:g} h) -> "
                       f"{routing['district_officer']}; at 150% -> {'emergency team' if immediate else 'Commissioner'}.")
             if immediate:
                 reason = "CRITICAL hazard: supervisor and emergency cell alerted immediately. " + reason
+            reason += cite
             return AgentResult(self.name, out, reason)
         return self.timed(_plan)
 

@@ -7,6 +7,7 @@ import tempfile
 
 os.environ["CIVIC_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 os.environ["CIVIC_AI_MODE"] = "rules"
+os.environ["CIVIC_MCP_WARM"] = "off"  # MCP is exercised against an offline fake server in test_mcp_rag.py
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -80,7 +81,7 @@ def test_escalation_fires_after_time_warp(client):
 def test_reports_and_predictions(client):
     r = client.get("/api/report?days=30&narrative=true").json()
     assert r["total_complaints"] > 300 and 0 < r["city_efficiency"] <= 100
-    assert r["narrative_mode"] == "template" and "###" in r["narrative"]
+    assert r["narrative_mode"] == "template+rag" and "###" in r["narrative"]
     assert len(r["wards"]) == 24 and r["departments"]
     p = client.get("/api/predict?rain=80").json()
     assert p["waterlogging"][0]["risk"] >= p["waterlogging"][-1]["risk"]

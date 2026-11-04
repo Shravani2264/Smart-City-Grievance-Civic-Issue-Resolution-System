@@ -3,7 +3,7 @@ import {
   AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Bot, Building2, CheckCircle2, ChevronRight, Clock3, CloudRain, Download, FileText,
   Filter, GitMerge, Layers, LocateFixed, Plus, ShieldAlert, Sparkles, TicketCheck, TrendingUp, UserCheck, Users,
 } from 'lucide-react'
-import { ago, api, fmtDur, slaText, type Citizen, type CivicEvent, type Complaint, type Dashboard, type DeptPerf, type MapData, type Prediction, type Report } from './api'
+import { ago, api, fmtDur, slaText, type Citizen, type CivicEvent, type Complaint, type Dashboard, type DeptPerf, type MapData, type PolicyAnswer, type Prediction, type Report } from './api'
 import { BarList, CityMap, Meter, SlaBadge, TrendChart, catHex, priorityClass } from './charts'
 
 type Common = { now: number; version: number; onSelect: (id: string) => void }
@@ -207,6 +207,17 @@ function DeptCard({ d }: { d: DeptPerf }) {
 // ------------------------------------------------------------------ Insights (predictive + reputation)
 export function InsightsView({ version, onToast }: Common & { onToast: (m: string) => void }) {
   const [rain, setRain] = useState<number | null>(null)
+  const [rainSource, setRainSource] = useState('manual')
+  const [fetchingLive, setFetchingLive] = useState(false)
+  async function fetchLive() {
+    setFetchingLive(true)
+    try {
+      const r = await api.predictLive()
+      setRainSource(r.rain_source ?? 'manual')
+      if (r.rain_source?.startsWith('mcp:')) { setRain(r.rain_mm_hr); onToast(`Live forecast via MCP: ${r.rain_mm_hr} mm/h peak over the next ${r.hours} h`) }
+      else onToast(r.rain_source ?? 'Live forecast unavailable')
+    } catch (e) { onToast(`Live forecast failed: ${(e as Error).message}`) } finally { setFetchingLive(false) }
+  }
   const pred = useLoad<Prediction>(() => api.predict(rain ?? undefined), [rain, version])
   const map = useLoad(() => api.map(), [version])
   const cit = useLoad(() => api.citizens(), [version])
@@ -218,10 +229,12 @@ export function InsightsView({ version, onToast }: Common & { onToast: (m: strin
       <div className="panel pad">
         <div className="panel-heading"><div><span className="eyebrow">WATERLOGGING FORECAST</span><h2>Rainfall scenario</h2></div><CloudRain size={18} className="muted-icon" /></div>
         <div className="rain-control">
-          <input type="range" min={0} max={120} step={2} value={rain ?? 24} onChange={(e) => setRain(Number(e.target.value))} aria-label="Forecast rainfall mm per hour" />
+          <input type="range" min={0} max={120} step={2} value={rain ?? 24} onChange={(e) => { setRain(Number(e.target.value)); setRainSource('manual') }} aria-label="Forecast rainfall mm per hour" />
           <strong>{rain ?? '…'} mm/h</strong>
           <button className="outline-button" onClick={async () => { if (rain !== null) { await api.setRain(rain); onToast(`Forecast set to ${rain} mm/h - drainage teams briefed on high-risk wards`) } }}>Use as forecast</button>
+          <button className="outline-button" onClick={fetchLive} disabled={fetchingLive}>{fetchingLive ? 'Fetching…' : 'Live forecast (MCP)'}</button>
         </div>
+        <small className="muted">Source: {rainSource}</small>
         {map.data ? <CityMap data={map.data} mode="risk" highlight={risk} showPoints={false} /> : <Loading err={map.err} />}
       </div>
       <div className="panel pad">
@@ -291,11 +304,40 @@ export function TransparencyView({ version, aiEnabled }: Common & { aiEnabled: b
       </tbody></table></div></div>
       <div className="panel pad narrative-panel">
         <div className="panel-heading"><div><span className="eyebrow">REPORTING AGENT</span><h2>Monthly civic report</h2></div><button className="primary-button" onClick={generate} disabled={loadingNarr}><Sparkles size={15} />{loadingNarr ? 'Writing…' : narr ? 'Regenerate' : 'Generate'}</button></div>
-        {narr ? <><Markdown text={narr.text} /><small className="muted">{narr.mode === 'ai' ? 'Written by the Groq LLM from the figures above.' : 'Template narrative (enable GROQ_API_KEY for an AI-written report).'}</small></>
+        {narr ? <><Markdown text={narr.text} /><small className="muted">{narr.mode.startsWith('ai') ? 'Written by the Groq LLM from the figures above, grounded in retrieved policy clauses.' : 'Template narrative with retrieved policy clauses (enable GROQ_API_KEY for an AI-written report).'}</small></>
           : <p className="panel-note">Generates a plain-language public report from this period's figures{aiEnabled ? ' using the Groq LLM' : ''}: highlights, shortfalls and measurable commitments.</p>}
       </div>
     </section>
+    <section className="lower-grid"><PolicyAsk /></section>
   </>
+}
+
+const POLICY_EXAMPLES = ['When does an overdue ticket reach the Commissioner?', 'What is the SLA for an open manhole?', 'Can a low rating reopen a closed ticket?']
+
+function PolicyAsk() {
+  const [q, setQ] = useState('')
+  const [ans, setAns] = useState<PolicyAnswer | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  async function ask(question: string) {
+    if (question.trim().length < 3) return
+    setQ(question); setBusy(true); setErr('')
+    try { setAns(await api.askPolicy(question)) } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  return <div className="panel pad policy-panel">
+    <div className="panel-heading"><div><span className="eyebrow">POLICY RAG · SQLITE FTS5</span><h2>Ask the service policy</h2></div><FileText size={18} className="muted-icon" /></div>
+    <form className="policy-form" onSubmit={(e) => { e.preventDefault(); ask(q) }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. How long does Solid Waste have to clear uncollected garbage?" aria-label="Policy question" />
+      <button className="primary-button" disabled={busy}>{busy ? 'Searching…' : 'Ask'}</button>
+    </form>
+    <div className="policy-examples">{POLICY_EXAMPLES.map((x) => <button key={x} className="text-button" onClick={() => ask(x)}>{x}</button>)}</div>
+    {err && <p className="danger-text">{err}</p>}
+    {ans && <div className="policy-answer"><p>{ans.answer}</p>
+      <small className="muted">{ans.mode === 'rag+llm' ? 'Answered by the LLM from retrieved clauses only' : 'Extractive answer from the top retrieved clauses'} · {ans.ms} ms</small>
+      <div className="policy-cites">{ans.citations.map((c) => <span key={c.id} className="policy-cite" title={c.title}>{c.id} · v{c.version}</span>)}</div>
+      <details><summary>Retrieved ({ans.retrieved.length})</summary><ul>{ans.retrieved.map((r) => <li key={r.id}><strong>{r.id}</strong> {r.title} <span className="muted">(BM25 {r.score})</span></li>)}</ul></details>
+    </div>}
+  </div>
 }
 
 function Markdown({ text }: { text: string }) {

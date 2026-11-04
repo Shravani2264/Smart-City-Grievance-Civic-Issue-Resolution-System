@@ -2,7 +2,7 @@
 import statistics
 from collections import Counter, defaultdict
 
-from .. import db, llm
+from .. import db, llm, policy_rag
 from ..config import CATEGORY_COLORS, CITY, DEPARTMENTS, WARDS
 from .sla import sla_state
 
@@ -104,14 +104,21 @@ class TransparencyReportAgent:
         summary["top_issues"] = r["top_issues"][:5]
         summary["departments"] = [{k: d[k] for k in ("name", "score", "sla_compliance", "avg_resolution_h", "open", "overdue")} for d in r["departments"]]
         summary["wards"] = [{k: w[k] for k in ("ward", "name", "score", "open", "overdue", "top_issue")} for w in r["wards"]]
+        # RAG: ground the report in the service policy so shortfalls are measured against the actual standards.
+        worst = r["departments"][-1]["name"] if r["departments"] else ""
+        hits = policy_rag.INDEX.search(f"sla breach escalation verification reopen closure {worst}", k=5)
+        clauses = [c for c, _ in hits]
+        allowed = {c.id for c in clauses}
         txt = llm.text(
             "You write the monthly public transparency report for a city's grievance redressal system. Audience: residents and "
             "councillors. Plain language, factual, no hype; cite the numbers given and never invent any. Structure: a 2-sentence "
             "headline summary, then 'What went well', 'Where we fell short' (name the weakest departments/wards), and 'Commitments "
-            "for next month' (3 concrete, measurable actions). Under 300 words. Markdown headings with ###.",
-            f"Data for {r['city']}:\n{summary}")
+            "for next month' (3 concrete, measurable actions). Where a shortfall or commitment relates to a service rule, cite the "
+            "clause ID from <policy_context> in square brackets, e.g. [POL-ESC-001]; cite only IDs that appear there. "
+            "Under 300 words. Markdown headings with ###.",
+            f"{policy_rag.context_block(clauses)}\n\nData for {r['city']}:\n{summary}")
         if txt:
-            return txt, "ai"
+            return policy_rag.strip_unknown_citations(txt, allowed), "ai+rag"
         best, worst = r["departments"][0], r["departments"][-1]
         wards = sorted([w for w in r["wards"] if w["score"] is not None], key=lambda w: w["score"])
         prev = r["prev_avg_resolution_h"]
@@ -130,5 +137,6 @@ class TransparencyReportAgent:
             f"- {r['escalations']} escalations were triggered and {r['reopened']} fixes failed verification and were reopened.\n\n"
             f"### Commitments for next month\n- Cut {worst['short']} overdue backlog by half with additional crew allocation.\n"
             f"- Pre-emptive drives on the top issues ({top}) in the weakest wards.\n- Raise citywide SLA compliance above "
-            f"{min(98, round((r['sla_compliance'] or 80) + 4))}%."
-        ), "template"
+            f"{min(98, round((r['sla_compliance'] or 80) + 4))}%.\n\n"
+            f"### Policy basis\n" + "\n".join(f"- {c.tag} {c.title}" for c in clauses[:4])
+        ), "template+rag"

@@ -1,8 +1,7 @@
 """Agent 6 - SLA & Deadline: assigns the resolution timeline and tracks breach risk."""
-from ..config import ESCALATION_LEVELS, ISSUE_TYPES
+from .. import policy_rag
+from ..config import ESCALATION_LEVELS, ISSUE_TYPES, PRIORITY_FACTOR, SLA_FLOOR_H
 from .base import Agent, AgentResult
-
-PRIORITY_FACTOR = {"CRITICAL": 0.5, "HIGH": 0.75, "MEDIUM": 1.0, "LOW": 1.25}
 
 
 def sla_state(c, now):
@@ -25,11 +24,12 @@ class SLAAgent(Agent):
 
     def _run(self, issue_type, priority, created_at):
         base = ISSUE_TYPES[issue_type]["sla"]
-        hours = max(2, round(base * PRIORITY_FACTOR[priority], 1))
+        hours = max(SLA_FLOOR_H, round(base * PRIORITY_FACTOR[priority], 1))
         due = created_at + hours * 3600
         plan = [{"level": e["level"], "label": e["label"], "after_h": round(hours * e["at"], 1), "at": created_at + hours * e["at"] * 3600}
                 for e in ESCALATION_LEVELS]
-        out = {"sla_hours": hours, "base_sla_hours": base, "due_at": due, "escalation_plan": plan}
+        refs, cite = policy_rag.cite(policy_rag.sla_clause_id(issue_type), "POL-ESC-001")
+        out = {"sla_hours": hours, "base_sla_hours": base, "due_at": due, "escalation_plan": plan, "policy": refs}
         reason = (f"Service standard for {ISSUE_TYPES[issue_type]['label'].lower()} is {base} h; {priority} priority applies x{PRIORITY_FACTOR[priority]} "
-                  f"-> {hours:g} h. Escalation checkpoints at " + ", ".join(f"{p['after_h']:g} h ({p['label']})" for p in plan) + ".")
+                  f"-> {hours:g} h. Escalation checkpoints at " + ", ".join(f"{p['after_h']:g} h ({p['label']})" for p in plan) + "." + cite)
         return AgentResult(self.name, out, reason)

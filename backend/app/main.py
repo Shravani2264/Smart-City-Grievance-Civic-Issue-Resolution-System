@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, llm
+from . import db, llm, mcp_client, policy_rag
 from .agents.orchestrator import Orchestrator
 from .agents.predictive import PredictiveAgent
 from .agents.reporting import TransparencyReportAgent, efficiency
@@ -43,8 +43,13 @@ async def lifespan(_app):
             except Exception:
                 logging.exception("tick failed")
     task = asyncio.create_task(loop())
+    # Warm the MCP sessions in the background so the first live-forecast request does not pay the process start.
+    warm = asyncio.create_task(asyncio.to_thread(mcp_client.HUB.status, True)) if os.environ.get("CIVIC_MCP_WARM", "on") != "off" else None
     yield
     task.cancel()
+    if warm:
+        warm.cancel()
+    await asyncio.to_thread(mcp_client.HUB.close)
 
 
 app = FastAPI(title="CivicPulse API", version="2.0", lifespan=lifespan)
@@ -92,7 +97,7 @@ def view(c, now=None, full=False):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ai": llm.status(), "clock": db.now(),
+    return {"ok": True, "ai": llm.status(), "policies": policy_rag.INDEX.stats(), "mcp": mcp_client.HUB.status(), "clock": db.now(),
             "clock_offset_hours": db.get_setting("clock_offset_hours", 0), "agents": len(AGENTS)}
 
 
@@ -327,10 +332,51 @@ def report_csv(days: int = 30):
 
 
 @app.get("/api/predict")
-def predict(rain: float | None = None, hours: float = 3):
-    rain = rain if rain is not None else db.get_setting("rain_mm_hr", 24)
+def predict(rain: float | None = None, hours: float = 3, source: str = "manual"):
+    """source=live pulls the forecast through the MCP rainfall server; it falls back to the manual setting on failure."""
     p = PredictiveAgent()
-    return {"rain_mm_hr": rain, "hours": hours, "waterlogging": p.waterlogging(rain, hours), "hotspots": p.hotspots()}
+    live = None
+    if source == "live":
+        live = p.live_rainfall(hours)
+        if live["ok"]:
+            rain = live["rain_mm_hr"]
+    if rain is None:
+        rain = db.get_setting("rain_mm_hr", 24)
+    rain_source = live["source"] if live and live["ok"] else ("manual (live feed unavailable: " + live["reason"] + ")" if live else "manual")
+    return {"rain_mm_hr": rain, "hours": hours, "rain_source": rain_source, "live": live,
+            "policy": [policy_rag.INDEX.get(i).ref() for i in ("POL-MON-001", "POL-MON-002")],
+            "waterlogging": p.waterlogging(rain, hours), "hotspots": p.hotspots()}
+
+
+@app.get("/api/mcp")
+def mcp_status(connect: bool = False):
+    return mcp_client.HUB.status(connect=connect)
+
+
+class AskBody(BaseModel):
+    question: str
+
+
+@app.get("/api/policies")
+def policies(q: str = "", k: int = 6):
+    if q:
+        return {"query": q, "results": [{**c.ref(s), "body": c.body} for c, s in policy_rag.INDEX.search(q, k=max(1, min(k, 20)))]}
+    return {"stats": policy_rag.INDEX.stats(), "clauses": [{**c.ref(), "tags": list(c.tags)} for c in policy_rag.INDEX.clauses.values()]}
+
+
+@app.get("/api/policies/{pid}")
+def policy(pid: str):
+    c = policy_rag.INDEX.get(pid)
+    if not c:
+        raise HTTPException(404, "No such policy clause")
+    return {**c.ref(), "tags": list(c.tags), "body": c.body}
+
+
+@app.post("/api/policies/ask")
+async def policy_ask(body: AskBody):
+    if len(body.question.strip()) < 3:
+        raise HTTPException(400, "Ask a question about the service policy")
+    return await asyncio.to_thread(policy_rag.ask, body.question)
 
 
 @app.get("/api/citizens")

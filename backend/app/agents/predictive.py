@@ -6,14 +6,28 @@
 """
 from collections import Counter
 
-from .. import db
+from .. import db, mcp_client, policy_rag
 from ..config import WARDS
 
 DAY = 86400
+MUMBAI = (19.076, 72.8777)
+LIVE_TTL_S = 900  # forecasts change slowly; one MCP call per 15 min is plenty
 
 
 class PredictiveAgent:
     name = "Predictive Intelligence"
+
+    def live_rainfall(self, hours: float = 3, hub: "mcp_client.MCPHub | None" = None) -> dict:
+        """Fetch the rainfall forecast through the MCP 'rainfall' server. Result is validated (POL-AI-003, POL-MON-002)."""
+        hub = hub or mcp_client.HUB
+        r = hub.call("rainfall", "get_rainfall_forecast", {"lat": MUMBAI[0], "lng": MUMBAI[1], "hours": int(max(1, round(hours)))},
+                     timeout=12, ttl=LIVE_TTL_S)
+        peak = r.get("peak_mm_hr") if isinstance(r, dict) else None
+        if not isinstance(peak, (int, float)) or not 0 <= peak <= 150:
+            err = next((s["last_error"] for s in hub.status()["servers"] if s["name"] == "rainfall"), None)
+            return {"ok": False, "reason": err or ("MCP disabled" if not hub.enabled else "invalid or missing forecast")}
+        return {"ok": True, "rain_mm_hr": round(float(peak), 1), "mean_mm_hr": r.get("mean_mm_hr"), "hourly": r.get("hourly", [])[:48],
+                "source": f"mcp:rainfall/get_rainfall_forecast ({r.get('source', 'unknown')})"}
 
     def waterlogging(self, rain_mm_hr: float, hours: float = 3):
         now = db.now()
@@ -42,7 +56,8 @@ class PredictiveAgent:
                       "HIGH": "Clear open blockages within 6 h; stage a pump",
                       "MODERATE": "Inspect known choke points before rainfall",
                       "LOW": "Routine monitoring"}[level]
-            out.append({"ward": w, "name": m["name"], "risk": score, "level": level, "drivers": drivers or ["adequate drainage"], "action": action})
+            out.append({"ward": w, "name": m["name"], "risk": score, "level": level, "drivers": drivers or ["adequate drainage"], "action": action,
+                        "policy": policy_rag.INDEX.get("POL-MON-001").tag})
         return sorted(out, key=lambda r: -r["risk"])
 
     def hotspots(self):
